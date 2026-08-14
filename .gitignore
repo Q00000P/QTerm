@@ -1,0 +1,4 @@
+.build/
+build/
+*.xcuserdatad
+.DS_Store
