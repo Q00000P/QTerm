@@ -83,6 +83,13 @@ struct ContentView: View {
                 state.upsert(updated)
             })
             .id(session.id)
+            .background {
+                // Горячие клавиши вкладок: ⌘T — новая, ⌘W — закрыть активную.
+                Button("") { conn.openChannel() }
+                    .keyboardShortcut("t", modifiers: .command).hidden()
+                Button("") { if let id = conn.activeChannelID { conn.closeChannel(id) } }
+                    .keyboardShortcut("w", modifiers: .command).hidden()
+            }
             .onAppear {
                 DispatchQueue.main.async {
                     if let tv = state.terminals[session.id] {
@@ -124,9 +131,10 @@ struct SessionDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             controlBar
+            tabBar
             statusBar
             HSplitView {
-                TerminalHostView(connection: connection)
+                terminalArea
                     .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
                 SFTPBrowserView(connection: connection)
                     .frame(minWidth: 240, idealWidth: 320)
@@ -137,14 +145,57 @@ struct SessionDetailView: View {
         }
     }
 
+    /// Все вкладки существуют одновременно; показывается активная — так
+    /// фоновые вкладки продолжают принимать вывод и не теряют буфер.
+    @ViewBuilder
+    private var terminalArea: some View {
+        ZStack {
+            ForEach(connection.channels) { ch in
+                TerminalHostView(connection: connection, channel: ch)
+                    .opacity(ch.id == connection.activeChannelID ? 1 : 0)
+                    .allowsHitTesting(ch.id == connection.activeChannelID)
+            }
+            if connection.channels.isEmpty {
+                Color.black
+            }
+        }
+    }
+
+    private var tabBar: some View {
+        HStack(spacing: 4) {
+            ForEach(connection.channels) { ch in
+                TabChip(
+                    channel: ch,
+                    isActive: ch.id == connection.activeChannelID,
+                    onSelect: { connection.activeChannelID = ch.id },
+                    onClose: { connection.closeChannel(ch.id) }
+                )
+            }
+            Button {
+                let ch = connection.openChannel()
+                connection.activeChannelID = ch.id
+            } label: {
+                Image(systemName: "plus")
+            }
+            .buttonStyle(.borderless)
+            .help("Новая вкладка на этой ноде (⌘T)")
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(.black.opacity(0.15))
+    }
+
     private var controlBar: some View {
         HStack(spacing: 12) {
-            Toggle(isOn: $state.broadcastInput) {
-                Label("Во все", systemImage: "dot.radiowaves.left.and.right")
-                    .font(.caption)
+            Picker("", selection: $state.broadcastMode) {
+                ForEach(AppState.BroadcastMode.allCases, id: \.self) { m in
+                    Text(m.title).tag(m)
+                }
             }
-            .toggleStyle(.button)
-            .help("Сквозной ввод: печать уходит во все подключённые сессии")
+            .pickerStyle(.menu)
+            .fixedSize()
+            .help("Куда уходит набранное: в текущую вкладку, во все вкладки ноды или во все ноды")
 
             Menu {
                 if state.snippets.isEmpty {
@@ -152,8 +203,9 @@ struct SessionDetailView: View {
                 }
                 ForEach(state.snippets) { snip in
                     Menu(snip.title) {
-                        Button("→ В текущую") { send(snip, toAll: false) }
-                        Button("⇉ Во все подключённые") { send(snip, toAll: true) }
+                        Button("→ В текущую вкладку") { send(snip, scope: .off) }
+                        Button("⇉ Во все вкладки ноды") { send(snip, scope: .allTabsOfNode) }
+                        Button("⇛ Во все ноды") { send(snip, scope: .allNodes) }
                     }
                 }
                 Divider()
@@ -164,8 +216,8 @@ struct SessionDetailView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
 
-            if state.broadcastInput {
-                Text("СКВОЗНОЙ ВВОД: печать уходит во все подключённые ноды")
+            if state.broadcastMode != .off {
+                Text("СКВОЗНОЙ ВВОД: \(state.broadcastMode.title)")
                     .font(.caption2).bold().foregroundStyle(.red)
             }
             Spacer()
@@ -174,12 +226,12 @@ struct SessionDetailView: View {
         .padding(.vertical, 4)
     }
 
-    private func send(_ snip: Snippet, toAll: Bool) {
+    private func send(_ snip: Snippet, scope: AppState.BroadcastMode) {
         let bytes = Array((snip.command + "\n").utf8)[...]
-        if toAll {
-            state.sendToAllConnected(bytes)
-        } else {
-            connection.sendToShell(bytes)
+        switch scope {
+        case .off: connection.activeChannel?.send(bytes)
+        case .allTabsOfNode: connection.sendToAllChannels(bytes)
+        case .allNodes: state.sendToAllConnected(bytes)
         }
     }
 
@@ -205,9 +257,38 @@ struct SessionDetailView: View {
             EmptyView()
         }
     }
+}
 
-    private func barText(_ s: String, _ c: Color) -> some View {
-        HStack { Text(s).font(.caption).foregroundStyle(c); Spacer() }.padding(6)
+/// Плашка вкладки в таб-баре.
+struct TabChip: View {
+    @ObservedObject var channel: TerminalChannel
+    let isActive: Bool
+    let onSelect: () -> Void
+    let onClose: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(channel.isLive ? .green : .gray.opacity(0.5))
+                .frame(width: 5, height: 5)
+            Text(channel.displayName)
+                .font(.caption)
+                .lineLimit(1)
+            if hovering || isActive {
+                Button(action: onClose) {
+                    Image(systemName: "xmark").font(.system(size: 8))
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(isActive ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
+        .onHover { hovering = $0 }
     }
 }
 

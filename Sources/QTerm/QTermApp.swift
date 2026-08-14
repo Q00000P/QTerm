@@ -33,17 +33,27 @@ final class AppState: ObservableObject {
     @Published var connections: [UUID: SSHConnection] = [:]
     /// Сессии с непросмотренным выводом (маячок в сайдбаре).
     @Published var unseenActivity: Set<UUID> = []
-    /// Сквозной ввод: печать в активном терминале уходит во все подключённые сессии.
-    @Published var broadcastInput = false
-
-    /// Разослать байты во все подключённые сессии (для сквозного ввода и сниппетов).
-    func sendToAllConnected(_ data: ArraySlice<UInt8>) {
-        for conn in connections.values where conn.status == .connected {
-            conn.sendToShell(data)
+    /// Режим сквозного ввода.
+    enum BroadcastMode: String, CaseIterable {
+        case off, allTabsOfNode, allNodes
+        var title: String {
+            switch self {
+            case .off: return "Обычный"
+            case .allTabsOfNode: return "Во все вкладки ноды"
+            case .allNodes: return "Во все ноды"
+            }
         }
     }
-    /// Живые экраны терминалов: создаются один раз на сессию и переживают
-    /// переключения между сессиями (буфер/скроллбек сохраняются).
+    @Published var broadcastMode: BroadcastMode = .off
+
+    /// Разослать байты во все подключённые ноды (во все их живые вкладки).
+    func sendToAllConnected(_ data: ArraySlice<UInt8>) {
+        for conn in connections.values where conn.status == .connected {
+            conn.sendToAllChannels(data)
+        }
+    }
+    /// Живые экраны терминалов — по id ВКЛАДКИ (канала): переключение вкладок
+    /// и нод не уничтожает буфер и скроллбек.
     var terminals: [UUID: TerminalView] = [:]
     @Published var vaultError: String?
     /// Избранные команды из вейлта.
@@ -105,10 +115,12 @@ final class AppState: ObservableObject {
     }
 
     func delete(_ session: Session) {
-        connections[session.id]?.disconnect()
+        if let conn = connections[session.id] {
+            for ch in conn.channels { terminals.removeValue(forKey: ch.id) }
+            conn.disconnect()
+        }
         connections[session.id] = nil
         connectionSubs[session.id] = nil
-        terminals.removeValue(forKey: session.id)
         sessions.removeAll { $0.id == session.id }
         secrets.deleteAll(for: session.id)
         persist()
