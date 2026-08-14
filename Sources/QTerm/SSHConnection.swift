@@ -5,9 +5,6 @@ import NIOSSH
 import Crypto
 import SessionVaultKit
 
-/// Одно SSH-соединение на сессию: shell-канал с PTY (для терминала) и
-/// SFTP-канал (для проводника) поверх него же — как это делает MobaXterm.
-
 /// Wire-сериализация публичного ключа сервера (для TOFU-хранения/сравнения).
 func hostKeyWireData(_ key: NIOSSHPublicKey) -> Data {
     var buf = ByteBufferAllocator().buffer(capacity: 256)
@@ -25,6 +22,74 @@ final class FirstContactRecorder: NIOSSHClientServerAuthenticationDelegate, @unc
     }
 }
 
+// MARK: - TerminalChannel
+
+/// Один shell-канал с PTY поверх SSH-соединения ноды. Этап 1: у ноды ровно
+/// один канал; этап 2 добавит вкладки — несколько каналов на одно соединение.
+@MainActor
+final class TerminalChannel: ObservableObject, Identifiable {
+    let id = UUID()
+
+    /// Байты с сервера — терминал кормит их в SwiftTerm.feed.
+    var onOutput: ((ArraySlice<UInt8>) -> Void)?
+    /// Любая активность канала (для маячка в сайдбаре).
+    var onActivity: (() -> Void)?
+
+    private var stdinWriter: TTYStdinWriter?
+
+    func send(_ data: ArraySlice<UInt8>) {
+        guard let writer = stdinWriter else { return }
+        var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+        buffer.writeBytes(data)
+        Task { try? await writer.write(buffer) }
+    }
+
+    func resize(cols: Int, rows: Int) {
+        guard let writer = stdinWriter else { return }
+        Task { try? await writer.changeSize(cols: cols, rows: rows, pixelWidth: 0, pixelHeight: 0) }
+    }
+
+    func detach() {
+        stdinWriter = nil
+    }
+
+    /// Открывает shell+PTY и качает вывод до конца канала. Блокируется.
+    /// `isCurrent` — проверка актуальности поколения соединения ноды.
+    func run(client: SSHClient, cols: Int, rows: Int, isCurrent: @escaping () -> Bool) async throws {
+        try await client.withPTY(
+            SSHChannelRequestEvent.PseudoTerminalRequest(
+                wantReply: true,
+                term: "xterm-256color",
+                terminalCharacterWidth: cols,
+                terminalRowHeight: rows,
+                terminalPixelWidth: 0,
+                terminalPixelHeight: 0,
+                terminalModes: .init([.ECHO: 1])
+            )
+        ) { ttyOutput, stdinWriter in
+            guard isCurrent() else { return }
+            self.stdinWriter = stdinWriter
+            for try await chunk in ttyOutput {
+                guard isCurrent() else { return }
+                let buffer: ByteBuffer
+                switch chunk {
+                case .stdout(let b): buffer = b
+                case .stderr(let b): buffer = b
+                }
+                if let bytes = buffer.getBytes(at: buffer.readerIndex, length: buffer.readableBytes) {
+                    self.onOutput?(bytes[...])
+                    self.onActivity?()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - SSHConnection (соединение ноды)
+
+/// Одно SSH-соединение на ноду: аутентификация, TOFU, SFTP, реконнект.
+/// Терминальный ввод/вывод делегируется каналам (TerminalChannel).
+/// Этап 1: канал ровно один (primaryChannel), внешний API совместим со старым.
 @MainActor
 final class SSHConnection: ObservableObject {
 
@@ -46,12 +111,22 @@ final class SSHConnection: ObservableObject {
     private var client: SSHClient?
     private(set) var sftp: SFTPClient?
 
-    /// Терминал подписывается сюда и кормит байты в SwiftTerm.feed.
-    var onOutput: ((ArraySlice<UInt8>) -> Void)?
-    /// Дёргается на любой вывод с сервера — для индикатора активности в сайдбаре.
-    var onActivity: (() -> Void)?
-    /// Писалка в stdin PTY; выставляется после установления shell-канала.
-    private var stdinWriter: TTYStdinWriter?
+    /// Единственный канал этапа 1. Этап 2 превратит это в [TerminalChannel].
+    private(set) var primaryChannel = TerminalChannel()
+
+    /// Совместимость со старым API: терминал подписывается сюда.
+    var onOutput: ((ArraySlice<UInt8>) -> Void)? {
+        didSet { wireChannel() }
+    }
+    /// Активность для маячка в сайдбаре.
+    var onActivity: (() -> Void)? {
+        didSet { wireChannel() }
+    }
+
+    private func wireChannel() {
+        primaryChannel.onOutput = { [weak self] bytes in self?.onOutput?(bytes) }
+        primaryChannel.onActivity = { [weak self] in self?.onActivity?() }
+    }
 
     private var shellTask: Task<Void, Never>?
 
@@ -60,17 +135,11 @@ final class SSHConnection: ObservableObject {
     var pendingHostKey: String?
     var pendingFingerprint: String?
 
-    /// Авто-реконнект при обрыве установленного соединения.
     var autoReconnect = true
-    /// Поколение соединения: события от устаревших connect-тасков игнорируются.
     private var generation = 0
-    /// Ручной режим: до этого момента авто-ретраи молчат. Published — UI показывает отсчёт.
     @Published var autoPausedUntil: Date?
-    /// Когда автомат сделает следующую попытку (для живого отсчёта в статус-баре).
     @Published var nextRetryAt: Date?
-    /// Начало текущей попытки подключения — статус-бар показывает её длительность.
     @Published var attemptStartedAt: Date?
-    /// Номер текущей попытки (1, 2, 3…) — 0 если попыток ещё не было.
     @Published var attemptNumber = 0
     private var retryAttempt = 0
     private var retryTask: Task<Void, Never>?
@@ -131,8 +200,6 @@ final class SSHConnection: ObservableObject {
                     }
                 }
 
-                // SFTP на том же соединении — сразу, чтобы проводник
-                // был готов одновременно с терминалом.
                 let sftp = try await client.openSFTP()
                 guard gen == self.generation else { try? await client.close(); return }
                 self.sftp = sftp
@@ -146,32 +213,10 @@ final class SSHConnection: ObservableObject {
                 self.attemptNumber = 0
                 self.onOutput?(Array("\r\n".utf8)[...])
 
-                // Shell с PTY. Блокируется до конца сессии.
-                try await client.withPTY(
-                    SSHChannelRequestEvent.PseudoTerminalRequest(
-                        wantReply: true,
-                        term: "xterm-256color",
-                        terminalCharacterWidth: cols,
-                        terminalRowHeight: rows,
-                        terminalPixelWidth: 0,
-                        terminalPixelHeight: 0,
-                        terminalModes: .init([.ECHO: 1])
-                    )
-                ) { ttyOutput, stdinWriter in
-                    guard gen == self.generation else { return }
-                    self.stdinWriter = stdinWriter
-                    for try await chunk in ttyOutput {
-                        guard gen == self.generation else { return }
-                        let buffer: ByteBuffer
-                        switch chunk {
-                        case .stdout(let b): buffer = b
-                        case .stderr(let b): buffer = b
-                        }
-                        if let bytes = buffer.getBytes(at: buffer.readerIndex, length: buffer.readableBytes) {
-                            self.onOutput?(bytes[...])
-                            self.onActivity?()
-                        }
-                    }
+                // Shell-канал. Блокируется до конца сессии.
+                self.wireChannel()
+                try await self.primaryChannel.run(client: client, cols: cols, rows: rows) {
+                    gen == self.generation
                 }
 
                 guard gen == self.generation else { return }
@@ -181,15 +226,11 @@ final class SSHConnection: ObservableObject {
                 guard gen == self.generation else { return }
                 let text = String(describing: error)
                 self.attemptStartedAt = nil
-                // Исход каждой попытки видим в терминале — иначе непонятно,
-                // работает ли реконнект вообще.
                 if self.wasConnected {
                     let short = text.count > 90 ? String(text.prefix(90)) + "…" : text
                     self.onOutput?(Array("\u{1B}[31m✗ попытка не удалась: \(short)\u{1B}[0m\r\n".utf8)[...])
                 }
                 self.status = .failed(text)
-                // Сетевые обрывы ретраим, ошибки аутентификации/ключей — нет
-                // (молотить сервер неверным ключом = бан fail2ban).
                 let authFailure = text.contains("allAuthenticationOptionsFailed")
                     || text.contains("InvalidOpenSSHKey")
                     || text.contains("missingDecryptionKey")
@@ -205,7 +246,7 @@ final class SSHConnection: ObservableObject {
         switch session.authMethod {
         case .password:
             guard let password = try secrets.get(for: session.id, kind: .password) else {
-                throw ConnectionError.missingSecret("нет пароля в Keychain")
+                throw ConnectionError.missingSecret("нет пароля в хранилище")
             }
             return .passwordBased(username: session.username, password: password)
 
@@ -227,8 +268,6 @@ final class SSHConnection: ObservableObject {
             if let ed = try? Curve25519.Signing.PrivateKey(sshEd25519: keyText, decryptionKey: decryptionKey) {
                 return .ed25519(username: session.username, privateKey: ed)
             }
-            // RSA Citadel подписывает как ssh-rsa (SHA-1) — современный sshd отвергнет.
-            // Поддержка RSA — через будущий форк Citadel (легаси-хосты типа Keenetic).
             _ = try Insecure.RSA.PrivateKey(sshRsa: keyText, decryptionKey: decryptionKey)
             throw ConnectionError.missingSecret("RSA-ключ (\(expanded)) — Citadel подписывает его как ssh-rsa, сервер такое не примет; укажи ed25519-ключ")
 
@@ -237,18 +276,14 @@ final class SSHConnection: ObservableObject {
         }
     }
 
-    // MARK: - Terminal I/O
+    // MARK: - Terminal I/O (совместимость: делегирование каналу)
 
     func sendToShell(_ data: ArraySlice<UInt8>) {
-        guard let writer = stdinWriter else { return }
-        var buffer = ByteBufferAllocator().buffer(capacity: data.count)
-        buffer.writeBytes(data)
-        Task { try? await writer.write(buffer) }
+        primaryChannel.send(data)
     }
 
     func resize(cols: Int, rows: Int) {
-        guard let writer = stdinWriter else { return }
-        Task { try? await writer.changeSize(cols: cols, rows: rows, pixelWidth: 0, pixelHeight: 0) }
+        primaryChannel.resize(cols: cols, rows: rows)
     }
 
     // MARK: - TOFU
@@ -266,7 +301,6 @@ final class SSHConnection: ObservableObject {
     private func scheduleRetryIfNeeded(reason: String) {
         guard autoReconnect, wasConnected else { return }
 
-        // Ручной режим: автомат молчит до конца паузы, потом возобновляется.
         if let until = autoPausedUntil, Date() < until {
             status = .closed
             let gen = generation
@@ -284,8 +318,6 @@ final class SSHConnection: ObservableObject {
 
         retryAttempt += 1
         let delay = min(30.0, pow(2.0, Double(retryAttempt - 1)))
-        // В скроллбек — только факт обрыва, без обещаний времени (они устаревают
-        // и путают: живое состояние показывает статус-бар).
         if retryAttempt == 1 {
             let banner = "\r\n\u{1B}[33m— обрыв: \(reason) —\u{1B}[0m\r\n"
             onOutput?(Array(banner.utf8)[...])
@@ -303,19 +335,19 @@ final class SSHConnection: ObservableObject {
             Task { try? await oldClient?.close() }
             self.client = nil
             self.sftp = nil
-            self.stdinWriter = nil
+            self.primaryChannel.detach()
             self.status = .idle
             self.connect(cols: 80, rows: 24)
         }
     }
 
-    /// Немедленная попытка, минуя таймер бэкоффа (клавиша R / кнопка «Сейчас»).
+    /// Немедленная попытка, минуя таймер бэкоффа (клавиша R / кнопка).
     /// Каждый вызов перевзводит ручную паузу автомата на 60с.
     func retryNow() {
         onOutput?(Array("\r\n\u{1B}[36m→ попытка подключения вручную…\u{1B}[0m\r\n".utf8)[...])
         autoPausedUntil = Date().addingTimeInterval(60)
         nextRetryAt = nil
-        generation += 1 // осиротить все летящие таски
+        generation += 1
         retryTask?.cancel()
         retryTask = nil
         shellTask?.cancel()
@@ -323,13 +355,11 @@ final class SSHConnection: ObservableObject {
         Task { try? await oldClient?.close() }
         client = nil
         sftp = nil
-        stdinWriter = nil
+        primaryChannel.detach()
         status = .idle
         connect(cols: 80, rows: 24)
     }
 
-    /// R живая всегда, пока нет установленного соединения — включая долгую
-    /// попытку подключения: нажатие бросает её и стартует новую немедленно.
     var isInterrupted: Bool {
         switch status {
         case .connected, .awaitingTrust, .idle: return false
@@ -347,7 +377,7 @@ final class SSHConnection: ObservableObject {
     // MARK: - Teardown
 
     func disconnect() {
-        generation += 1 // никакие висящие таски больше не действительны
+        generation += 1
         retryTask?.cancel()
         retryTask = nil
         wasConnected = false
@@ -361,7 +391,7 @@ final class SSHConnection: ObservableObject {
         let client = self.client
         self.client = nil
         self.sftp = nil
-        self.stdinWriter = nil
+        primaryChannel.detach()
         Task { try? await client?.close() }
         status = .closed
     }
