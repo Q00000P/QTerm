@@ -2,12 +2,14 @@ import SwiftUI
 import AppKit
 import SwiftTerm
 
-/// Обёртка SwiftTerm.TerminalView для SwiftUI, привязанная к вкладке (каналу).
-/// Экраны живут в реестре AppState по id канала — переключение вкладок и нод
-/// не уничтожает буфер и скроллбек.
+/// Обёртка SwiftTerm.TerminalView для ОДНОЙ вкладки (канала).
+/// Ввод уходит строго в свой канал; двусмысленность «чей делегат сработал
+/// последним» исключена — каждый экран знает свой channel, а неактивные
+/// вкладки не получают клики (allowsHitTesting) и фокус.
 struct TerminalHostView: NSViewRepresentable {
     @ObservedObject var connection: SSHConnection
     @ObservedObject var channel: TerminalChannel
+    let isActive: Bool
     @EnvironmentObject var state: AppState
 
     func makeCoordinator() -> Coordinator {
@@ -38,16 +40,22 @@ struct TerminalHostView: NSViewRepresentable {
         let t = tv.getTerminal()
         channel.cols = t.cols
         channel.rows = t.rows
-
-        // Соединение поднимается один раз на ноду; вкладка на живом
-        // соединении открывается сразу в openChannel.
-        if connection.status == .idle || connection.status == .closed {
-            connection.connect(cols: t.cols, rows: t.rows)
-        }
+        // Первая вкладка ноды поднимает соединение; остальные открывают
+        // дополнительный канал поверх уже живого (мультиплекс).
+        connection.connect(cols: t.cols, rows: t.rows)
         return tv
     }
 
-    func updateNSView(_ nsView: TerminalView, context: Context) {}
+    func updateNSView(_ nsView: TerminalView, context: Context) {
+        // Делегат всегда указывает на координатор ЭТОЙ вкладки.
+        nsView.terminalDelegate = context.coordinator
+        context.coordinator.terminalView = nsView
+        if isActive {
+            DispatchQueue.main.async {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+        }
+    }
 
     final class Coordinator: NSObject, TerminalViewDelegate {
         let connection: SSHConnection
@@ -63,6 +71,9 @@ struct TerminalHostView: NSViewRepresentable {
 
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
             MainActor.assumeIsolated {
+                // Страховка: печать обрабатывает только активная вкладка.
+                guard state.activeTabID == channel.id else { return }
+
                 if connection.isInterrupted,
                    data.count == 1, let ch = data.first, ch == 0x72 || ch == 0x52 { // r / R
                     connection.retryNow()
@@ -71,8 +82,6 @@ struct TerminalHostView: NSViewRepresentable {
                 switch state.broadcastMode {
                 case .off:
                     channel.send(data)
-                case .allTabsOfNode:
-                    connection.sendToAllChannels(data)
                 case .allNodes:
                     state.sendToAllConnected(data)
                 }
@@ -84,7 +93,7 @@ struct TerminalHostView: NSViewRepresentable {
         }
 
         func setTerminalTitle(source: TerminalView, title: String) {
-            MainActor.assumeIsolated { channel.title = title.isEmpty ? nil : title }
+            MainActor.assumeIsolated { channel.title = title }
         }
 
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}

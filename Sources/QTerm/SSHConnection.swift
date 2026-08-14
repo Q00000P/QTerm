@@ -25,32 +25,32 @@ final class FirstContactRecorder: NIOSSHClientServerAuthenticationDelegate, @unc
 // MARK: - TerminalChannel (вкладка)
 
 /// Один shell-канал с PTY поверх SSH-соединения ноды = одна вкладка.
-/// Несколько каналов мультиплексируются в одном соединении: логин, TOFU и
-/// Touch ID происходят один раз на ноду, как в MobaXterm.
+/// Несколько каналов мультиплексируются в одном соединении, как в MobaXterm:
+/// аутентификация, TOFU и Touch ID происходят один раз на ноду.
 @MainActor
 final class TerminalChannel: ObservableObject, Identifiable {
     let id = UUID()
-    /// Номер вкладки для заголовка (1, 2, 3…). Присваивается соединением.
+    /// Номер вкладки для заголовка (1, 2, 3…). Присваивает соединение.
     @Published var index: Int = 1
     /// Заголовок из OSC 0/2, если шелл его прислал.
     @Published var title: String?
-    /// Канал жив (PTY открыт).
-    @Published var isLive = false
-    /// Закрыт пользователем — такой канал не восстанавливается при реконнекте.
-    var closedByUser = false
+    /// Канал открыт и качает данные.
+    @Published private(set) var isRunning = false
 
+    /// Байты с сервера — терминал кормит их в SwiftTerm.feed.
     var onOutput: ((ArraySlice<UInt8>) -> Void)?
+    /// Любая активность канала (для маячка в сайдбаре).
     var onActivity: (() -> Void)?
 
     private var stdinWriter: TTYStdinWriter?
     var task: Task<Void, Never>?
-    /// Последние размеры терминала — нужны при переоткрытии после реконнекта.
-    var cols = 80
-    var rows = 24
+    /// Последний известный размер — используется при переоткрытии канала.
+    var cols: Int = 80
+    var rows: Int = 24
 
-    var displayName: String {
-        if let title, !title.isEmpty { return title }
-        return "Вкладка \(index)"
+    var displayTitle: String {
+        if let t = title, !t.isEmpty { return t }
+        return "Терминал \(index)"
     }
 
     func send(_ data: ArraySlice<UInt8>) {
@@ -69,7 +69,9 @@ final class TerminalChannel: ObservableObject, Identifiable {
 
     func detach() {
         stdinWriter = nil
-        isLive = false
+        isRunning = false
+        task?.cancel()
+        task = nil
     }
 
     func write(_ text: String) {
@@ -78,6 +80,8 @@ final class TerminalChannel: ObservableObject, Identifiable {
 
     /// Открывает shell+PTY и качает вывод до конца канала. Блокируется.
     func run(client: SSHClient, isCurrent: @escaping () -> Bool) async throws {
+        isRunning = true
+        defer { isRunning = false }
         try await client.withPTY(
             SSHChannelRequestEvent.PseudoTerminalRequest(
                 wantReply: true,
@@ -91,7 +95,6 @@ final class TerminalChannel: ObservableObject, Identifiable {
         ) { ttyOutput, stdinWriter in
             guard isCurrent() else { return }
             self.stdinWriter = stdinWriter
-            self.isLive = true
             for try await chunk in ttyOutput {
                 guard isCurrent() else { return }
                 let buffer: ByteBuffer
@@ -111,7 +114,7 @@ final class TerminalChannel: ObservableObject, Identifiable {
 // MARK: - SSHConnection (соединение ноды)
 
 /// Одно SSH-соединение на ноду: аутентификация, TOFU, SFTP, реконнект.
-/// Терминалы живут во вкладках-каналах поверх этого соединения.
+/// Терминалы живут во вкладках (TerminalChannel) поверх этого соединения.
 @MainActor
 final class SSHConnection: ObservableObject {
 
@@ -125,6 +128,8 @@ final class SSHConnection: ObservableObject {
     }
 
     @Published var status: Status = .idle
+    /// Вкладки этой ноды. Первая создаётся сразу, чтобы UI было что рисовать.
+    @Published private(set) var channels: [TerminalChannel] = []
 
     private let sessionProvider: () -> Session
     var session: Session { sessionProvider() }
@@ -133,72 +138,8 @@ final class SSHConnection: ObservableObject {
     private var client: SSHClient?
     private(set) var sftp: SFTPClient?
 
-    // MARK: - Вкладки
-
-    @Published private(set) var channels: [TerminalChannel] = []
-    @Published var activeChannelID: UUID?
-
-    /// Активность любой вкладки (для маячка в сайдбаре).
+    /// Активность любой вкладки (маячок в сайдбаре).
     var onActivity: (() -> Void)?
-    /// Служебные сообщения (обрывы, реконнект) — во все вкладки.
-    private func broadcastNotice(_ text: String) {
-        for ch in channels { ch.write(text) }
-    }
-
-    var activeChannel: TerminalChannel? {
-        channels.first { $0.id == activeChannelID } ?? channels.first
-    }
-
-    /// Новая вкладка. Если соединение живое — открывается сразу.
-    @discardableResult
-    func openChannel(cols: Int = 80, rows: Int = 24) -> TerminalChannel {
-        let ch = TerminalChannel()
-        ch.cols = cols
-        ch.rows = rows
-        ch.index = (channels.map(\.index).max() ?? 0) + 1
-        ch.onActivity = { [weak self] in self?.onActivity?() }
-        channels.append(ch)
-        activeChannelID = ch.id
-        if status == .connected { startChannel(ch) }
-        return ch
-    }
-
-    func closeChannel(_ id: UUID) {
-        guard let idx = channels.firstIndex(where: { $0.id == id }) else { return }
-        let ch = channels[idx]
-        ch.closedByUser = true
-        ch.task?.cancel()
-        ch.detach()
-        channels.remove(at: idx)
-        if activeChannelID == id { activeChannelID = channels.last?.id }
-        // Закрыли последнюю вкладку — рвём соединение ноды.
-        if channels.isEmpty { disconnect() }
-    }
-
-    private func startChannel(_ ch: TerminalChannel) {
-        guard let client else { return }
-        let gen = generation
-        ch.task = Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await ch.run(client: client) { gen == self.generation }
-                self.channelEnded(ch, error: nil, gen: gen)
-            } catch {
-                self.channelEnded(ch, error: error, gen: gen)
-            }
-        }
-    }
-
-    /// Канал завершился. Если это не пользовательское закрытие и живых
-    /// каналов не осталось — считаем соединение потерянным.
-    private func channelEnded(_ ch: TerminalChannel, error: Error?, gen: Int) {
-        guard gen == generation else { return }
-        ch.detach()
-        if ch.closedByUser { return }
-        if channels.contains(where: { $0.isLive }) { return }
-        status = .closed
-        scheduleRetryIfNeeded(reason: error.map { String(describing: $0) } ?? "соединение закрыто")
-    }
 
     private var connectTask: Task<Void, Never>?
 
@@ -220,11 +161,67 @@ final class SSHConnection: ObservableObject {
     init(sessionProvider: @escaping () -> Session, secrets: SecretStore) {
         self.sessionProvider = sessionProvider
         self.secrets = secrets
+        _ = addChannel() // первая вкладка
+    }
+
+    // MARK: - Вкладки
+
+    @discardableResult
+    func addChannel() -> TerminalChannel {
+        let ch = TerminalChannel()
+        ch.index = (channels.map(\.index).max() ?? 0) + 1
+        ch.onActivity = { [weak self] in self?.onActivity?() }
+        channels.append(ch)
+        // Соединение живо — открываем канал сразу.
+        if let client, status == .connected {
+            startChannel(ch, client: client, gen: generation)
+        }
+        return ch
+    }
+
+    func closeChannel(_ ch: TerminalChannel) {
+        ch.detach()
+        channels.removeAll { $0.id == ch.id }
+        // Последнюю вкладку не закрываем в ноль — держим одну пустую.
+        if channels.isEmpty {
+            _ = addChannel()
+        }
+    }
+
+    /// Рассылка во все вкладки этой ноды.
+    func sendToAllChannels(_ data: ArraySlice<UInt8>) {
+        for ch in channels { ch.send(data) }
+    }
+
+    private func startChannel(_ ch: TerminalChannel, client: SSHClient, gen: Int) {
+        ch.task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await ch.run(client: client) { gen == self.generation }
+            } catch {
+                if gen == self.generation {
+                    let text = String(describing: error)
+                    let short = text.count > 90 ? String(text.prefix(90)) + "…" : text
+                    ch.write("\r\n\u{1B}[31m✗ канал закрыт: \(short)\u{1B}[0m\r\n")
+                }
+            }
+            guard gen == self.generation else { return }
+            self.channelFinished()
+        }
+    }
+
+    /// Канал завершился: если умерли все — соединение считается оборванным.
+    private func channelFinished() {
+        guard status == .connected else { return }
+        if channels.allSatisfy({ !$0.isRunning }) {
+            status = .closed
+            scheduleRetryIfNeeded(reason: "соединение закрыто")
+        }
     }
 
     // MARK: - Connect
 
-    func connect(cols: Int = 80, rows: Int = 24) {
+    func connect(cols: Int, rows: Int) {
         guard status != .connecting, status != .connected else { return }
         status = .connecting
         attemptStartedAt = Date()
@@ -251,6 +248,7 @@ final class SSHConnection: ObservableObject {
                 guard gen == self.generation else { try? await client.close(); return }
                 self.client = client
 
+                // TOFU: сверка/сохранение ключа сервера.
                 if let captured = recorder.capturedKey {
                     let wire = hostKeyWireData(captured)
                     let fingerprint = "SHA256:" + Data(SHA256.hash(data: wire)).base64EncodedString()
@@ -283,12 +281,13 @@ final class SSHConnection: ObservableObject {
                 self.attemptStartedAt = nil
                 self.attemptNumber = 0
 
-                // Поднимаем вкладки: существующие переоткрываем (скроллбек
-                // сохраняется), если ни одной — создаём первую.
-                if self.channels.isEmpty {
-                    self.openChannel(cols: cols, rows: rows)
-                } else {
-                    for ch in self.channels { self.startChannel(ch) }
+                // Открываем каналы для всех существующих вкладок.
+                if self.channels.isEmpty { _ = self.addChannel() }
+                self.channels.first?.cols = cols
+                self.channels.first?.rows = rows
+                for ch in self.channels {
+                    ch.write("\r\n")
+                    self.startChannel(ch, client: client, gen: gen)
                 }
             } catch {
                 guard gen == self.generation else { return }
@@ -296,7 +295,7 @@ final class SSHConnection: ObservableObject {
                 self.attemptStartedAt = nil
                 if self.wasConnected {
                     let short = text.count > 90 ? String(text.prefix(90)) + "…" : text
-                    self.broadcastNotice("\u{1B}[31m✗ попытка не удалась: \(short)\u{1B}[0m\r\n")
+                    self.broadcastToChannels("\u{1B}[31m✗ попытка не удалась: \(short)\u{1B}[0m\r\n")
                 }
                 self.status = .failed(text)
                 let authFailure = text.contains("allAuthenticationOptionsFailed")
@@ -308,6 +307,10 @@ final class SSHConnection: ObservableObject {
                 }
             }
         }
+    }
+
+    private func broadcastToChannels(_ text: String) {
+        for ch in channels { ch.write(text) }
     }
 
     private func makeAuthMethod() throws -> SSHAuthenticationMethod {
@@ -344,17 +347,6 @@ final class SSHConnection: ObservableObject {
         }
     }
 
-    // MARK: - Ввод (в активную вкладку)
-
-    func sendToShell(_ data: ArraySlice<UInt8>) {
-        activeChannel?.send(data)
-    }
-
-    /// Разослать во все вкладки этой ноды.
-    func sendToAllChannels(_ data: ArraySlice<UInt8>) {
-        for ch in channels where ch.isLive { ch.send(data) }
-    }
-
     // MARK: - TOFU
 
     func trustPendingHostKey(save: (String) -> Void) {
@@ -388,7 +380,7 @@ final class SSHConnection: ObservableObject {
         retryAttempt += 1
         let delay = min(30.0, pow(2.0, Double(retryAttempt - 1)))
         if retryAttempt == 1 {
-            broadcastNotice("\r\n\u{1B}[33m— обрыв: \(reason) —\u{1B}[0m\r\n")
+            broadcastToChannels("\r\n\u{1B}[33m— обрыв: \(reason) —\u{1B}[0m\r\n")
         }
         status = .closed
         nextRetryAt = Date().addingTimeInterval(delay)
@@ -400,13 +392,14 @@ final class SSHConnection: ObservableObject {
             self.nextRetryAt = nil
             self.teardownTransport()
             self.status = .idle
-            self.connect()
+            self.connect(cols: self.channels.first?.cols ?? 80, rows: self.channels.first?.rows ?? 24)
         }
     }
 
     /// Немедленная попытка, минуя таймер бэкоффа (клавиша R / кнопка).
+    /// Каждый вызов перевзводит ручную паузу автомата на 60с.
     func retryNow() {
-        broadcastNotice("\r\n\u{1B}[36m→ попытка подключения вручную…\u{1B}[0m\r\n")
+        broadcastToChannels("\r\n\u{1B}[36m→ попытка подключения вручную…\u{1B}[0m\r\n")
         autoPausedUntil = Date().addingTimeInterval(60)
         nextRetryAt = nil
         generation += 1
@@ -414,16 +407,14 @@ final class SSHConnection: ObservableObject {
         retryTask = nil
         teardownTransport()
         status = .idle
-        connect()
+        connect(cols: channels.first?.cols ?? 80, rows: channels.first?.rows ?? 24)
     }
 
-    /// Закрыть транспорт, СОХРАНИВ вкладки (их переоткроет connect).
+    /// Рвём транспорт, но НЕ трогаем список вкладок — их каналы переоткроются.
     private func teardownTransport() {
         connectTask?.cancel()
-        for ch in channels {
-            ch.task?.cancel()
-            ch.detach()
-        }
+        connectTask = nil
+        for ch in channels { ch.detach() }
         let oldClient = client
         Task { try? await oldClient?.close() }
         client = nil
@@ -439,12 +430,9 @@ final class SSHConnection: ObservableObject {
     }
 
     func reconnect() {
-        generation += 1
-        retryTask?.cancel()
-        retryTask = nil
-        teardownTransport()
+        disconnect()
         status = .idle
-        connect()
+        connect(cols: channels.first?.cols ?? 80, rows: channels.first?.rows ?? 24)
     }
 
     // MARK: - Teardown

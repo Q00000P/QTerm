@@ -5,12 +5,14 @@ struct ContentView: View {
     @EnvironmentObject var state: AppState
     @State private var editingSession: Session?
     @State private var showAdd = false
+    @State private var showSnippetEditor = false
+    @State private var stripHeight: CGFloat = 30
 
     var body: some View {
         HSplitView {
             sidebar
                 .frame(minWidth: 220, maxWidth: 300)
-            detail
+            workspace
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .sheet(isPresented: $showAdd) {
@@ -21,36 +23,65 @@ struct ContentView: View {
             EditSessionView(session: s) { state.upsert($0) }
                 .environmentObject(state)
         }
+        .sheet(isPresented: $showSnippetEditor) {
+            SnippetEditorView().environmentObject(state)
+        }
     }
+
+    // MARK: - Сайдбар: список нод (что открыть), не переключатель экрана
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            List(selection: $state.selectedSessionID) {
+            List {
                 ForEach(state.sessions) { session in
+                    let isActiveNode = state.activeSessionID == session.id
                     HStack {
                         statusDot(for: session)
                         VStack(alignment: .leading) {
-                            Text(session.name).fontWeight(.medium)
+                            Text(session.name).fontWeight(isActiveNode ? .semibold : .medium)
                             Text("\(session.username)@\(session.host):\(String(session.port))")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                         Spacer()
+                        let openTabs = state.tabs.filter { $0.sessionID == session.id }.count
+                        if openTabs > 0 {
+                            Text("\(openTabs)")
+                                .font(.caption2).foregroundStyle(.secondary)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Capsule().fill(.gray.opacity(0.25)))
+                        }
                         if state.unseenActivity.contains(session.id) {
                             Circle().fill(.blue).frame(width: 7, height: 7)
                         }
                     }
-                    .tag(session.id)
+                    .padding(.vertical, 3)
+                    .padding(.horizontal, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(isActiveNode ? Color.accentColor.opacity(0.25)
+                                  : (state.selectedSessionID == session.id ? Color.gray.opacity(0.18) : Color.clear))
+                    )
+                    .contentShape(Rectangle())
+                    .help("\(session.username)@\(session.host):\(String(session.port))")
+                    .onTapGesture { state.focusNode(session) }
+                    .onTapGesture(count: 2) { state.openTab(for: session) }
                     .contextMenu {
+                        Button("Открыть в новой вкладке") { state.openTab(for: session) }
+                        Divider()
                         Button("Изменить") { editingSession = session }
-                        Button("Отключить") { state.connections[session.id]?.disconnect() }
+                        Button("Отключить (вкладки остаются)") {
+                            state.connections[session.id]?.disconnect()
+                        }
+                        Button("Закрыть все вкладки ноды") {
+                            state.closeAllTabs(for: session.id)
+                        }
+                        Divider()
                         Button("Удалить", role: .destructive) { state.delete(session) }
                     }
+                    .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
                 }
             }
             .listStyle(.sidebar)
-            .onChange(of: state.selectedSessionID) { _, newID in
-                state.markSeen(newID)
-            }
 
             Divider()
             HStack {
@@ -59,6 +90,16 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderless)
                 Spacer()
+                Button {
+                    if let id = state.selectedSessionID,
+                       let s = state.sessions.first(where: { $0.id == id }) {
+                        state.openTab(for: s)
+                    }
+                } label: {
+                    Label("Открыть", systemImage: "play.fill").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .disabled(state.selectedSessionID == nil)
             }
             .padding(8)
 
@@ -69,40 +110,6 @@ struct ContentView: View {
                 }
                 .padding(6)
             }
-        }
-    }
-
-    @ViewBuilder
-    private var detail: some View {
-        if let id = state.selectedSessionID,
-           let session = state.sessions.first(where: { $0.id == id }) {
-            let conn = state.connection(for: session)
-            SessionDetailView(connection: conn, onTrustHostKey: { b64 in
-                var updated = session
-                updated.extra["hostkey"] = b64
-                state.upsert(updated)
-            })
-            .id(session.id)
-            .background {
-                // Горячие клавиши вкладок: ⌘T — новая, ⌘W — закрыть активную.
-                Button("") { conn.openChannel() }
-                    .keyboardShortcut("t", modifiers: .command).hidden()
-                Button("") { if let id = conn.activeChannelID { conn.closeChannel(id) } }
-                    .keyboardShortcut("w", modifiers: .command).hidden()
-            }
-            .onAppear {
-                DispatchQueue.main.async {
-                    if let tv = state.terminals[session.id] {
-                        tv.window?.makeFirstResponder(tv)
-                    }
-                }
-            }
-        } else {
-            ContentUnavailableView(
-                "Выбери сессию",
-                systemImage: "terminal",
-                description: Text("Или добавь новую — «+» внизу слева")
-            )
         }
     }
 
@@ -118,84 +125,190 @@ struct ContentView: View {
         }
         return Circle().fill(color).frame(width: 8, height: 8)
     }
-}
 
-/// Терминал + проводник + строка состояния соединения (видимые ошибки
-/// вместо молчаливой серой точки).
-struct SessionDetailView: View {
-    @EnvironmentObject var state: AppState
-    @ObservedObject var connection: SSHConnection
-    var onTrustHostKey: ((String) -> Void)?
-    @State private var showSnippetEditor = false
+    // MARK: - Рабочая область: лента вкладок + терминалы + проводник
 
-    var body: some View {
-        VStack(spacing: 0) {
-            controlBar
-            tabBar
-            statusBar
-            HSplitView {
-                terminalArea
-                    .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
-                SFTPBrowserView(connection: connection)
-                    .frame(minWidth: 240, idealWidth: 320)
+    @ViewBuilder
+    private var workspace: some View {
+        if state.tabs.isEmpty {
+            ContentUnavailableView(
+                "Нет открытых вкладок",
+                systemImage: "terminal",
+                description: Text("Двойной клик по ноде слева — открыть терминал")
+            )
+        } else {
+            VStack(spacing: 0) {
+                controlBar
+                    .frame(height: 34)
+                Divider()
+                tabStrip
+                    .padding(.top, 4)
+                Divider()
+                statusBar
+                HSplitView {
+                    terminalArea
+                        .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                    browserArea
+                        .frame(minWidth: 240, idealWidth: 320)
+                }
             }
-        }
-        .sheet(isPresented: $showSnippetEditor) {
-            SnippetEditorView().environmentObject(state)
         }
     }
 
-    /// Все вкладки существуют одновременно; показывается активная — так
-    /// фоновые вкладки продолжают принимать вывод и не теряют буфер.
-    @ViewBuilder
+    /// Все терминалы живут одновременно; показывается активная вкладка.
     private var terminalArea: some View {
         ZStack {
-            ForEach(connection.channels) { ch in
-                TerminalHostView(connection: connection, channel: ch)
-                    .opacity(ch.id == connection.activeChannelID ? 1 : 0)
-                    .allowsHitTesting(ch.id == connection.activeChannelID)
-            }
-            if connection.channels.isEmpty {
-                Color.black
+            ForEach(state.tabs) { tab in
+                if let conn = state.connections[tab.sessionID],
+                   let ch = state.channel(for: tab) {
+                    TerminalHostView(connection: conn, channel: ch, isActive: tab.id == state.activeTabID)
+                        .opacity(tab.id == state.activeTabID ? 1 : 0)
+                        .allowsHitTesting(tab.id == state.activeTabID)
+                }
             }
         }
     }
 
-    private var tabBar: some View {
-        HStack(spacing: 4) {
-            ForEach(connection.channels) { ch in
-                TabChip(
-                    channel: ch,
-                    isActive: ch.id == connection.activeChannelID,
-                    onSelect: { connection.activeChannelID = ch.id },
-                    onClose: { connection.closeChannel(ch.id) }
+    /// Проводник следует за НОДОЙ активной вкладки: прыжки между вкладками
+    /// одной ноды его не дёргают (см. SFTPBrowserView — листинг по событию).
+    @ViewBuilder
+    private var browserArea: some View {
+        if let tab = state.activeTab, let conn = state.connections[tab.sessionID] {
+            SFTPBrowserView(connection: conn)
+                .id(tab.sessionID)
+        } else {
+            Color.clear
+        }
+    }
+
+    // MARK: - Лента вкладок
+    //
+    // Растёт до 3 рядов (перенос), дальше — вертикальный скролл внутри трёх
+    // рядов; при большом количестве основной способ навигации — меню «⌄»
+    // со всеми вкладками, сгруппированными по нодам.
+
+    private var tabStrip: some View {
+        HStack(alignment: .top, spacing: 6) {
+            ScrollView(.vertical, showsIndicators: true) {
+                FlowLayout(spacing: 4) {
+                    ForEach(state.tabs) { tab in
+                        tabChip(tab)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: TabStripHeightKey.self, value: geo.size.height)
+                    }
                 )
             }
+            // Высота по факту содержимого: один ряд — одна строка; максимум три.
+            .frame(height: min(stripHeight, 3 * 30))
+            .onPreferenceChange(TabStripHeightKey.self) { h in
+                stripHeight = max(h, 30)
+            }
+
             Button {
-                let ch = connection.openChannel()
-                connection.activeChannelID = ch.id
+                if let tab = state.activeTab, let s = state.session(for: tab) {
+                    state.openTab(for: s)
+                }
             } label: {
-                Image(systemName: "plus")
+                Image(systemName: "plus").font(.caption)
             }
             .buttonStyle(.borderless)
-            .help("Новая вкладка на этой ноде (⌘T)")
-            Spacer()
+            .help("Ещё одна вкладка текущей ноды (⌘T)")
+
+            Menu {
+                ForEach(state.sessions) { session in
+                    let nodeTabs = state.tabs.filter { $0.sessionID == session.id }
+                    if !nodeTabs.isEmpty {
+                        Section(session.name) {
+                            ForEach(nodeTabs) { tab in
+                                Button {
+                                    state.activeTabID = tab.id
+                                    state.markSeen(tab.sessionID)
+                                } label: {
+                                    let mark = state.unseenActivity.contains(tab.sessionID) ? " ●" : ""
+                                    Text(state.title(for: tab) + mark)
+                                }
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "chevron.down").font(.caption)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Все вкладки списком")
+        }
+        .padding(.trailing, 8)
+        .padding(.bottom, 6)
+    }
+
+    private func tabChip(_ tab: Tab) -> some View {
+        let isActive = tab.id == state.activeTabID
+        return HStack(spacing: 5) {
+            Circle()
+                .fill(dotColor(for: tab))
+                .frame(width: 5, height: 5)
+            Text(state.title(for: tab))
+                .font(.caption)
+                .lineLimit(1)
+            Button {
+                state.close(tab)
+            } label: {
+                Image(systemName: "xmark").font(.system(size: 8))
+            }
+            .buttonStyle(.borderless)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(.black.opacity(0.15))
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(isActive ? Color.accentColor.opacity(0.28) : Color.gray.opacity(0.12))
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            state.activeTabID = tab.id
+            state.markSeen(tab.sessionID)
+        }
+        .onDrag {
+            NSItemProvider(object: tab.id.uuidString as NSString)
+        }
+        .onDrop(of: [.text], delegate: TabDropDelegate(target: tab, state: state))
+        .contextMenu {
+            Button("Дублировать вкладку") {
+                if let s = state.session(for: tab) { state.openTab(for: s) }
+            }
+            Button("Закрыть", role: .destructive) { state.close(tab) }
+        }
     }
+
+    private func dotColor(for tab: Tab) -> Color {
+        let conn = state.connections[tab.sessionID]
+        switch conn?.status {
+        case .connected:
+            return (state.channel(for: tab)?.isRunning ?? false) ? .green : .yellow
+        case .connecting: return .yellow
+        case .awaitingTrust: return .orange
+        case .failed, .closed: return .red
+        default: return .gray.opacity(0.4)
+        }
+    }
+
+    // MARK: - Панель управления
 
     private var controlBar: some View {
         HStack(spacing: 12) {
             Picker("", selection: $state.broadcastMode) {
-                ForEach(AppState.BroadcastMode.allCases, id: \.self) { m in
-                    Text(m.title).tag(m)
+                ForEach(BroadcastMode.allCases, id: \.self) { mode in
+                    Text(mode.title).tag(mode)
                 }
             }
             .pickerStyle(.menu)
             .fixedSize()
-            .help("Куда уходит набранное: в текущую вкладку, во все вкладки ноды или во все ноды")
+            .help("Куда уходит ввод с клавиатуры")
 
             Menu {
                 if state.snippets.isEmpty {
@@ -203,9 +316,8 @@ struct SessionDetailView: View {
                 }
                 ForEach(state.snippets) { snip in
                     Menu(snip.title) {
-                        Button("→ В текущую вкладку") { send(snip, scope: .off) }
-                        Button("⇉ Во все вкладки ноды") { send(snip, scope: .allTabsOfNode) }
-                        Button("⇛ Во все ноды") { send(snip, scope: .allNodes) }
+                        Button("→ В эту вкладку") { send(snip, toAll: false) }
+                        Button("⇉ Во все ноды") { send(snip, toAll: true) }
                     }
                 }
                 Divider()
@@ -216,79 +328,71 @@ struct SessionDetailView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
 
-            if state.broadcastMode != .off {
-                Text("СКВОЗНОЙ ВВОД: \(state.broadcastMode.title)")
+            Divider().frame(height: 14)
+
+            Button {
+                state.clearActiveTerminal(includeScrollback: false)
+            } label: {
+                Image(systemName: "eraser").font(.body)
+            }
+            .buttonStyle(.borderless)
+            .help("Очистить экран (скроллбек остаётся)")
+
+            Button {
+                state.clearActiveTerminal(includeScrollback: true)
+            } label: {
+                Image(systemName: "trash").font(.body)
+            }
+            .buttonStyle(.borderless)
+            .help("Очистить экран и весь скроллбек этой вкладки")
+
+            if state.broadcastMode == .allNodes {
+                Text("СКВОЗНОЙ ВВОД: печать уходит во все подключённые ноды")
                     .font(.caption2).bold().foregroundStyle(.red)
             }
             Spacer()
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
     }
 
-    private func send(_ snip: Snippet, scope: AppState.BroadcastMode) {
+    private func send(_ snip: Snippet, toAll: Bool) {
         let bytes = Array((snip.command + "\n").utf8)[...]
-        switch scope {
-        case .off: connection.activeChannel?.send(bytes)
-        case .allTabsOfNode: connection.sendToAllChannels(bytes)
-        case .allNodes: state.sendToAllConnected(bytes)
+        if toAll {
+            state.sendToAllConnected(bytes)
+        } else if let tab = state.activeTab {
+            state.channel(for: tab)?.send(bytes)
         }
     }
+
+    // MARK: - Статус активной вкладки
 
     @ViewBuilder
     private var statusBar: some View {
-        switch connection.status {
-        case .connecting, .failed, .closed:
-            LiveStatusBar(connection: connection)
-        case .awaitingTrust(let fp):
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Новый сервер. Отпечаток ключа:").font(.caption)
-                Text(fp).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                HStack {
-                    Button("Доверять и подключиться") {
-                        connection.trustPendingHostKey { b64 in onTrustHostKey?(b64) }
-                    }
-                    Button("Отмена", role: .cancel) { connection.disconnect() }
-                }.font(.caption)
-            }
-            .padding(8)
-            .background(.yellow.opacity(0.12))
-        case .connected, .idle:
-            EmptyView()
-        }
-    }
-}
-
-/// Плашка вкладки в таб-баре.
-struct TabChip: View {
-    @ObservedObject var channel: TerminalChannel
-    let isActive: Bool
-    let onSelect: () -> Void
-    let onClose: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(channel.isLive ? .green : .gray.opacity(0.5))
-                .frame(width: 5, height: 5)
-            Text(channel.displayName)
-                .font(.caption)
-                .lineLimit(1)
-            if hovering || isActive {
-                Button(action: onClose) {
-                    Image(systemName: "xmark").font(.system(size: 8))
+        if let tab = state.activeTab, let conn = state.connections[tab.sessionID] {
+            switch conn.status {
+            case .connecting, .failed, .closed:
+                LiveStatusBar(connection: conn)
+            case .awaitingTrust(let fp):
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Новый сервер. Отпечаток ключа:").font(.caption)
+                    Text(fp).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                    HStack {
+                        Button("Доверять и подключиться") {
+                            conn.trustPendingHostKey { b64 in
+                                guard var s = state.session(for: tab) else { return }
+                                s.extra["hostkey"] = b64
+                                state.upsert(s)
+                            }
+                        }
+                        Button("Отмена", role: .cancel) { conn.disconnect() }
+                    }.font(.caption)
                 }
-                .buttonStyle(.borderless)
+                .padding(8)
+                .background(.yellow.opacity(0.12))
+            case .connected, .idle:
+                EmptyView()
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(isActive ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
-        .onHover { hovering = $0 }
     }
 }
 
@@ -317,7 +421,6 @@ struct LiveStatusBar: View {
         .onReceive(tick) { now = $0 }
     }
 
-    /// Кнопка есть всегда, когда соединения нет — включая «ни разу не подключались».
     private var showButton: Bool {
         switch connection.status {
         case .connected, .awaitingTrust: return false
@@ -438,5 +541,73 @@ struct SnippetEditorView: View {
         }
         .padding(16)
         .frame(width: 480, height: 400)
+    }
+}
+
+// MARK: - Перенос вкладок на следующий ряд
+
+/// Простой wrap-лейаут: вкладки переносятся на новый ряд, когда кончается
+/// ширина. Ограничение по высоте задаёт вызывающая сторона (3 ряда + скролл).
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        for v in subviews {
+            let size = v.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth, x > 0 {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: maxWidth == .infinity ? x : maxWidth, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for v in subviews {
+            let size = v.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            v.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+/// Перетаскивание вкладок: перекладываем в state.tabs, терминалы не трогаем.
+struct TabDropDelegate: DropDelegate {
+    let target: Tab
+    let state: AppState
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        provider.loadObject(ofClass: NSString.self) { item, _ in
+            guard let str = item as? String, let dragged = UUID(uuidString: str) else { return }
+            Task { @MainActor in
+                state.moveTab(id: dragged, before: target.id)
+            }
+        }
+        return true
+    }
+
+    func dropEntered(info: DropInfo) {}
+    func validateDrop(info: DropInfo) -> Bool { true }
+}
+
+
+/// Фактическая высота ленты вкладок — чтобы не резать место у терминала.
+struct TabStripHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 30
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

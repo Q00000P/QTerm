@@ -23,6 +23,8 @@ final class SFTPBrowser: ObservableObject {
     @Published var errorText: String?
     /// Текст прогресса длинной операции («Скачивание 12/40: name»), nil — нет операции.
     @Published var progressText: String?
+    /// Первый листинг после подключения уже был — повторно не дёргаем.
+    var didInitialList = false
 
     private weak var connection: SSHConnection?
     private var editWatchers: [String: DispatchSourceFileSystemObject] = [:]
@@ -59,6 +61,7 @@ final class SFTPBrowser: ObservableObject {
     // MARK: - Listing / navigation
 
     func refresh() {
+        didInitialList = true
         list(path: currentPath)
     }
 
@@ -366,9 +369,11 @@ struct SFTPBrowserView: View {
                     .lineLimit(2).padding(4)
             }
         }
-        .onAppear { browser.refresh() }
+        .onAppear { if !browser.didInitialList { browser.refresh() } }
         .onChange(of: connectionStatus) { _, st in
-            if st == .connected { browser.refresh() }
+            // Первый листинг после подключения ноды — дальше только вручную
+            // или после собственных операций (см. refresh() в CRUD).
+            if st == .connected && !browser.didInitialList { browser.refresh() }
         }
         .onDisappear { browser.stopWatchers() }
         .alert("Новая папка", isPresented: $showNewFolder) {
