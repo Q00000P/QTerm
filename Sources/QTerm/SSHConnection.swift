@@ -339,8 +339,10 @@ final class SSHConnection: ObservableObject {
             if let ed = try? Curve25519.Signing.PrivateKey(sshEd25519: keyText, decryptionKey: decryptionKey) {
                 return .ed25519(username: session.username, privateKey: ed)
             }
-            _ = try Insecure.RSA.PrivateKey(sshRsa: keyText, decryptionKey: decryptionKey)
-            throw ConnectionError.missingSecret("RSA-ключ (\(expanded)) — Citadel подписывает его как ssh-rsa, сервер такое не примет; укажи ed25519-ключ")
+            // RSA: наш форк Citadel подписывает rsa-sha2-256 (RFC 8332),
+            // современные серверы такое принимают.
+            let rsa = try Insecure.RSA.PrivateKey(sshRsa: keyText, decryptionKey: decryptionKey)
+            return .rsa(username: session.username, privateKey: rsa)
 
         case .agent:
             throw ConnectionError.missingSecret("agent-аутентификация — после MVP")

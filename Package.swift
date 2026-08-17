@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS(.v15)],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.2.0"),
-        .package(url: "https://github.com/orlandos-nl/Citadel", from: "0.7.0"),
+        .package(path: "../Citadel"),
         // SessionVaultKit рядом в той же папке (репо/воркспейс):
         .package(path: "../SessionVaultKit")
     ],
