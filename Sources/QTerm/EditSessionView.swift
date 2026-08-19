@@ -1,8 +1,9 @@
 import SwiftUI
+import AppKit
 import SessionVaultKit
 
-/// Добавление/правка сессии. Секрет (пароль/passphrase) вводится здесь,
-/// но НЕ попадает в Session/вейлт — уходит напрямую в SecretStore (Keychain).
+/// Добавление/правка сессии. Ключ — из хранилища вейлта (приоритет) или
+/// файлом с диска. Passphrase привязывается к ключу, не к сессии.
 struct EditSessionView: View {
     @EnvironmentObject var state: AppState
     @Environment(\.dismiss) private var dismiss
@@ -10,14 +11,20 @@ struct EditSessionView: View {
     let existing: Session?
     let onSave: (Session) -> Void
 
+    private enum KeySource: Hashable {
+        case vault(UUID)
+        case file
+    }
+
     @State private var name: String
     @State private var host: String
     @State private var port: String
     @State private var username: String
     @State private var authMethod: AuthMethod
+    @State private var keySource: KeySource
     @State private var privateKeyPath: String
     @State private var secret: String = ""       // пароль или passphrase
-    @State private var secretTouched = false     // менять Keychain только если правили
+    @State private var secretTouched = false
 
     init(session: Session?, onSave: @escaping (Session) -> Void) {
         self.existing = session
@@ -27,7 +34,12 @@ struct EditSessionView: View {
         _port = State(initialValue: session.map { String($0.port) } ?? "22")
         _username = State(initialValue: session?.username ?? "root")
         _authMethod = State(initialValue: session?.authMethod ?? .privateKey)
-        _privateKeyPath = State(initialValue: session?.privateKeyPath ?? "~/.ssh/id_ed25519")
+        if let keyID = session?.keyID {
+            _keySource = State(initialValue: .vault(keyID))
+        } else {
+            _keySource = State(initialValue: .file)
+        }
+        _privateKeyPath = State(initialValue: session?.privateKeyPath ?? "")
     }
 
     var body: some View {
@@ -48,15 +60,32 @@ struct EditSessionView: View {
                 .pickerStyle(.segmented)
 
                 if authMethod == .privateKey {
-                    HStack {
-                        TextField("Путь к ключу", text: $privateKeyPath)
-                        Button("…") { pickKey() }
+                    Picker("Ключ", selection: $keySource) {
+                        ForEach(state.sshKeys) { key in
+                            Text("🔑 \(key.name)").tag(KeySource.vault(key.id))
+                        }
+                        Text("Файл на диске…").tag(KeySource.file)
                     }
-                    SecureField("Passphrase (если есть)", text: $secret)
+
+                    if case .file = keySource {
+                        HStack {
+                            TextField("Путь к ключу", text: $privateKeyPath, prompt: Text("~/.ssh/id_ed25519"))
+                            Button("…") { pickKeyPath() }
+                            Button("В хранилище") { importToVault() }
+                                .help("Скопировать содержимое ключа в вейлт — файл станет не нужен")
+                        }
+                    }
+
+                    SecureField(passphrasePrompt, text: $secret)
                         .onChange(of: secret) { _, _ in secretTouched = true }
                 } else {
                     SecureField("Пароль", text: $secret)
                         .onChange(of: secret) { _, _ in secretTouched = true }
+                }
+
+                if let hint = existing?.extra["mobaKeyPath"] {
+                    Text("Из мобы: \(hint)")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
             }
 
@@ -65,24 +94,69 @@ struct EditSessionView: View {
                 Button("Отмена") { dismiss() }
                 Button("Сохранить") { save() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(host.isEmpty || username.isEmpty)
+                    .disabled(host.trimmingCharacters(in: .whitespaces).isEmpty ||
+                              username.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(16)
-        .frame(width: 420)
+        .frame(width: 440)
     }
 
-    private func pickKey() {
+    private var passphrasePrompt: String {
+        if case .vault(let id) = keySource,
+           state.secrets.passphrase(forKeyID: id) != nil {
+            return "Passphrase (уже сохранена — можно не вводить)"
+        }
+        return "Passphrase (если есть)"
+    }
+
+    private func pickKeyPath() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.showsHiddenFiles = true
-        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh")
+        panel.message = "Файл приватного ключа — из любой папки (Документы, Загрузки…)"
         if panel.runModal() == .OK, let url = panel.url {
             privateKeyPath = url.path
         }
     }
 
+    /// «В хранилище»: читаем файл по указанному пути и кладём в вейлт.
+    private func importToVault() {
+        let expanded = (privateKeyPath as NSString).expandingTildeInPath
+        guard !privateKeyPath.isEmpty,
+              let content = try? String(contentsOfFile: expanded, encoding: .utf8) else {
+            // Путь пуст/не читается — откроем панель выбора.
+            if let key = state.importKeyFile() {
+                keySource = .vault(key.id)
+            }
+            return
+        }
+        guard content.contains("BEGIN OPENSSH PRIVATE KEY") else { return }
+        if let existingKey = state.sshKeys.first(where: { $0.privateKey == content }) {
+            keySource = .vault(existingKey.id)
+            return
+        }
+        let key = SSHKey(name: (expanded as NSString).lastPathComponent, privateKey: content)
+        state.sshKeys.append(key)
+        state.persistKeysPublic()
+        keySource = .vault(key.id)
+    }
+
     private func save() {
+        let host = self.host.trimmingCharacters(in: .whitespaces)
+        let name = self.name.trimmingCharacters(in: .whitespaces)
+        let username = self.username.trimmingCharacters(in: .whitespaces)
+        let port = self.port.trimmingCharacters(in: .whitespaces)
+
+        var keyID: UUID? = nil
+        var keyPath: String? = nil
+        if authMethod == .privateKey {
+            switch keySource {
+            case .vault(let id): keyID = id
+            case .file: keyPath = privateKeyPath.isEmpty ? nil : privateKeyPath
+            }
+        }
+
         let session = Session(
             id: existing?.id ?? UUID(),
             name: name.isEmpty ? host : name,
@@ -90,13 +164,25 @@ struct EditSessionView: View {
             port: Int(port) ?? 22,
             username: username,
             authMethod: authMethod,
-            privateKeyPath: authMethod == .privateKey ? privateKeyPath : nil,
+            keyID: keyID,
+            privateKeyPath: keyPath,
             extra: existing?.extra ?? [:]
         )
 
         if secretTouched && !secret.isEmpty {
-            let kind: SecretKind = authMethod == .password ? .password : .privateKeyPassphrase
-            try? state.secrets.set(secret, for: session.id, kind: kind)
+            if authMethod == .password {
+                try? state.secrets.set(secret, for: session.id, kind: .password)
+            } else {
+                // Passphrase — к ключу, не к сессии.
+                switch keySource {
+                case .vault(let id):
+                    try? state.secrets.setPassphrase(secret, forKeyID: id)
+                case .file:
+                    if let keyPath {
+                        try? state.secrets.setPassphrase(secret, forPath: (keyPath as NSString).expandingTildeInPath)
+                    }
+                }
+            }
         }
 
         onSave(session)

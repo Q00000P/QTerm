@@ -8,7 +8,8 @@ let package = Package(
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.2.0"),
         .package(path: "../Citadel"),
         // SessionVaultKit рядом в той же папке (репо/воркспейс):
-        .package(path: "../SessionVaultKit")
+        .package(path: "../SessionVaultKit"),
+        .package(path: "../Argon2Swift")
     ],
     targets: [
         .executableTarget(
@@ -16,7 +17,8 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "Citadel", package: "Citadel"),
-                "SessionVaultKit"
+                "SessionVaultKit",
+                .product(name: "Argon2Swift", package: "Argon2Swift")
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         )

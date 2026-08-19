@@ -115,6 +115,13 @@ final class TerminalChannel: ObservableObject, Identifiable {
 
 /// Одно SSH-соединение на ноду: аутентификация, TOFU, SFTP, реконнект.
 /// Терминалы живут во вкладках (TerminalChannel) поверх этого соединения.
+/// Транспортные алгоритмы: добавляем AES128-CTR к штатным GCM из nio-ssh.
+private let ctrOnlyAlgorithms: SSHAlgorithms = {
+    var a = SSHAlgorithms()
+    a.transportProtectionSchemes = .add([AES128CTR.self])
+    return a
+}()
+
 @MainActor
 final class SSHConnection: ObservableObject {
 
@@ -134,6 +141,8 @@ final class SSHConnection: ObservableObject {
     private let sessionProvider: () -> Session
     var session: Session { sessionProvider() }
     private let secrets: SecretStore
+    /// Ключ из хранилища вейлта по id (замыкание в AppState).
+    private let keyProvider: (UUID) -> SSHKey?
 
     private var client: SSHClient?
     private(set) var sftp: SFTPClient?
@@ -158,9 +167,12 @@ final class SSHConnection: ObservableObject {
     private var retryTask: Task<Void, Never>?
     private var wasConnected = false
 
-    init(sessionProvider: @escaping () -> Session, secrets: SecretStore) {
+    init(sessionProvider: @escaping () -> Session,
+         secrets: SecretStore,
+         keyProvider: @escaping (UUID) -> SSHKey? = { _ in nil }) {
         self.sessionProvider = sessionProvider
         self.secrets = secrets
+        self.keyProvider = keyProvider
         _ = addChannel() // первая вкладка
     }
 
@@ -243,7 +255,13 @@ final class SSHConnection: ObservableObject {
                     port: session.port,
                     authenticationMethod: auth,
                     hostKeyValidator: validator,
-                    reconnect: .never
+                    reconnect: .never,
+                    // Только транспортный шифр: AES128-CTR нужен Keenetic/
+                    // Entware (там нет gcm). RSA как алгоритм ХОСТ-ключа не
+                    // регистрируем: наш патченый префикс rsa-sha2-256 заставлял
+                    // сервер отдавать RSA-хост-ключ, а его сериализация в
+                    // Citadel падает (precondition в ByteBuffer).
+                    algorithms: ctrOnlyAlgorithms
                 )
                 guard gen == self.generation else { try? await client.close(); return }
                 self.client = client
@@ -322,25 +340,36 @@ final class SSHConnection: ObservableObject {
             return .passwordBased(username: session.username, password: password)
 
         case .privateKey:
-            guard let path = session.privateKeyPath else {
-                throw ConnectionError.missingSecret("не указан путь к ключу")
+            let keyText: String
+            let passphrase: String?
+            let sourceLabel: String
+
+            if let keyID = session.keyID, let vaultKey = keyProvider(keyID) {
+                // Ключ из хранилища вейлта — файл на диске не нужен.
+                keyText = vaultKey.privateKey
+                passphrase = secrets.passphrase(forKeyID: keyID)
+                sourceLabel = "ключ «\(vaultKey.name)» из хранилища"
+            } else if let path = session.privateKeyPath {
+                let expanded = (path as NSString).expandingTildeInPath
+                guard FileManager.default.fileExists(atPath: expanded) else {
+                    throw ConnectionError.missingSecret("файл ключа не найден: \(expanded)")
+                }
+                keyText = try String(contentsOfFile: expanded, encoding: .utf8)
+                passphrase = secrets.passphrase(forPath: expanded, legacySession: session.id)
+                sourceLabel = expanded
+            } else {
+                throw ConnectionError.missingSecret("не назначен ключ (хранилище или файл)")
             }
-            let expanded = (path as NSString).expandingTildeInPath
-            guard FileManager.default.fileExists(atPath: expanded) else {
-                throw ConnectionError.missingSecret("файл ключа не найден: \(expanded)")
-            }
-            let keyText = try String(contentsOfFile: expanded, encoding: .utf8)
+
             let firstLine = keyText.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? "<пусто>"
             guard keyText.contains("BEGIN OPENSSH PRIVATE KEY") else {
-                throw ConnectionError.missingSecret("не-OpenSSH формат в \(expanded), первая строка: \(firstLine.prefix(40))")
+                throw ConnectionError.missingSecret("не-OpenSSH формат (\(sourceLabel)), первая строка: \(firstLine.prefix(40))")
             }
-            let passphrase = try secrets.get(for: session.id, kind: .privateKeyPassphrase)
             let decryptionKey = passphrase.map { Data($0.utf8) }
             if let ed = try? Curve25519.Signing.PrivateKey(sshEd25519: keyText, decryptionKey: decryptionKey) {
                 return .ed25519(username: session.username, privateKey: ed)
             }
-            // RSA: наш форк Citadel подписывает rsa-sha2-256 (RFC 8332),
-            // современные серверы такое принимают.
+            // RSA: наш форк Citadel подписывает rsa-sha2-256 (RFC 8332).
             let rsa = try Insecure.RSA.PrivateKey(sshRsa: keyText, decryptionKey: decryptionKey)
             return .rsa(username: session.username, privateKey: rsa)
 
