@@ -7,6 +7,7 @@ import SessionVaultKit
 @main
 struct QTermApp: App {
     @StateObject private var state = AppState()
+    @Environment(\.openWindow) private var openWindow
 
     private var titleString: String {
         let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -21,11 +22,13 @@ struct QTermApp: App {
                 .frame(minWidth: 1000, minHeight: 620)
         }
         .windowStyle(.titleBar)
+        .defaultSize(width: 1440, height: 860)
         .commands {
             CommandMenu("Данные") {
                 Button("Импорт из MobaXterm…") { state.importFromMoba() }
                 Button("Экспорт в MobaXterm…") { state.exportToMoba() }
                 Divider()
+                Button("Ключи…") { state.showKeyManager = true }
                 Button("Импортировать ключ в хранилище…") { state.importKeyFile() }
                 Button("Назначить ключ нодам без ключа…") { state.assignKeyToOrphans() }
                 Button("Задать passphrase ключа…") { state.setKeyPassphrase() }
@@ -34,9 +37,20 @@ struct QTermApp: App {
                 Button("Импорт вейлта из файла…") { state.importVaultFromFile() }
             }
             CommandGroup(after: .newItem) {
+                Button("Окно редактора") { openWindow(id: "editor") }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                Divider()
                 Button("Новая вкладка") { state.duplicateActiveTab() }
                     .keyboardShortcut("t", modifiers: .command)
-                Button("Закрыть вкладку") { state.closeActiveTab() }
+                Button("Закрыть вкладку") {
+                    // Ключевое окно — редактор: ⌘W закрывает вкладку файла,
+                    // а не терминала за спиной.
+                    if state.editor.isKeyWindow {
+                        state.editor.closeActiveDocument()
+                    } else {
+                        state.closeActiveTab()
+                    }
+                }
                     .keyboardShortcut("w", modifiers: .command)
                 Divider()
                 Button("Следующая вкладка") { state.cycleTab(+1) }
@@ -50,6 +64,14 @@ struct QTermApp: App {
                 }
             }
         }
+
+        // Окно редактора удалённых файлов (открывается из проводника).
+        Window("Редактор — QTerm", id: "editor") {
+            EditorWindowView(editor: state.editor)
+                .environmentObject(state)
+                .frame(minWidth: 720, minHeight: 440)
+        }
+        .defaultSize(width: 980, height: 660)
     }
 }
 
@@ -90,7 +112,20 @@ final class AppState: ObservableObject {
 
     /// Живые экраны терминалов по вкладке (channel.id).
     var terminals: [UUID: TerminalView] = [:]
+    /// Живые проводники по ноде (session.id): путь и листинг переживают
+    /// переключение нод, сбрасываются только с закрытием всех вкладок ноды.
+    var browsers: [UUID: SFTPBrowser] = [:]
+
+    func browser(for connection: SSHConnection) -> SFTPBrowser {
+        let id = connection.session.id
+        if let existing = browsers[id] { return existing }
+        let b = SFTPBrowser(connection: connection)
+        browsers[id] = b
+        return b
+    }
     @Published var vaultError: String?
+    /// Экран управления ключами (Данные → Ключи…).
+    @Published var showKeyManager = false
     @Published var snippets: [Snippet] = []
     /// Приватные ключи из вейлта.
     @Published var sshKeys: [SSHKey] = []
@@ -98,6 +133,13 @@ final class AppState: ObservableObject {
     let store = SessionStore()
     lazy var secrets = SecretStore(store: store)
     private var connectionSubs: [UUID: AnyCancellable] = [:]
+
+    /// Общее состояние окна редактора удалённых файлов.
+    lazy var editor: EditorState = {
+        let e = EditorState()
+        e.app = self
+        return e
+    }()
 
     init() {
         loadVault()
@@ -129,12 +171,29 @@ final class AppState: ObservableObject {
         for tab in tabs where tab.sessionID == sessionID {
             terminals.removeValue(forKey: tab.id)
         }
+        browsers[sessionID]?.stopWatchers()
+        browsers.removeValue(forKey: sessionID)
         tabs.removeAll { $0.sessionID == sessionID }
         connections[sessionID]?.disconnect()
         connections[sessionID] = nil
         connectionSubs[sessionID] = nil
         if activeTabID != nil, !tabs.contains(where: { $0.id == activeTabID }) {
             activeTabID = tabs.first?.id
+        }
+    }
+
+    /// Кнопка «закрыть все вкладки»: с подтверждением, рвёт все соединения.
+    func confirmCloseAllTabs() {
+        guard !tabs.isEmpty else { return }
+        let nodeCount = Set(tabs.map(\.sessionID)).count
+        let alert = NSAlert()
+        alert.messageText = "Закрыть все вкладки?"
+        alert.informativeText = "Вкладок: \(tabs.count), нод: \(nodeCount). Все соединения будут разорваны."
+        alert.addButton(withTitle: "Закрыть все")
+        alert.addButton(withTitle: "Отмена")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        for id in Set(tabs.map(\.sessionID)) {
+            closeAllTabs(for: id)
         }
     }
 
@@ -192,6 +251,8 @@ final class AppState: ObservableObject {
             conn.disconnect()
             connections[tab.sessionID] = nil
             connectionSubs[tab.sessionID] = nil
+            browsers[tab.sessionID]?.stopWatchers()
+            browsers.removeValue(forKey: tab.sessionID)
         }
         if wasActive {
             let next = min(idx ?? 0, max(tabs.count - 1, 0))
@@ -297,6 +358,8 @@ final class AppState: ObservableObject {
         connections[session.id]?.disconnect()
         connections[session.id] = nil
         connectionSubs[session.id] = nil
+        browsers[session.id]?.stopWatchers()
+        browsers.removeValue(forKey: session.id)
         sessions.removeAll { $0.id == session.id }
         secrets.deleteAll(for: session.id)
         persist()
@@ -512,6 +575,27 @@ final class AppState: ObservableObject {
         sshKeys.removeAll { $0.id == key.id }
         secrets.deletePassphrase(forKeyID: key.id)
         persistKeys()
+    }
+
+    func sessionsUsing(_ key: SSHKey) -> [Session] {
+        sessions.filter { $0.keyID == key.id }
+    }
+
+    func renameKey(_ key: SSHKey, to newName: String) {
+        guard let i = sshKeys.firstIndex(where: { $0.id == key.id }) else { return }
+        sshKeys[i].name = newName
+        persistKeys()
+    }
+
+    /// Удаление ключа с отвязкой от нод (иначе повиснут битые keyID).
+    func deleteKeyAndDetach(_ key: SSHKey) {
+        var changed = false
+        for i in sessions.indices where sessions[i].keyID == key.id {
+            sessions[i].keyID = nil
+            changed = true
+        }
+        if changed { persist() }
+        deleteKey(key)
     }
 
     func persistKeysPublic() { persistKeys() }

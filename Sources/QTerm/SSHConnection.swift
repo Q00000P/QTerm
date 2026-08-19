@@ -35,18 +35,26 @@ final class TerminalChannel: ObservableObject, Identifiable {
     /// Заголовок из OSC 0/2, если шелл его прислал.
     @Published var title: String?
     /// Канал открыт и качает данные.
-    @Published private(set) var isRunning = false
+    @Published private(set) var isRunning = false {
+        didSet { if oldValue != isRunning { onStateChange?() } }
+    }
 
     /// Байты с сервера — терминал кормит их в SwiftTerm.feed.
     var onOutput: ((ArraySlice<UInt8>) -> Void)?
     /// Любая активность канала (для маячка в сайдбаре).
     var onActivity: (() -> Void)?
+    /// Смена isRunning — для перерисовки статус-точек (соединение пробрасывает
+    /// в свой objectWillChange, иначе лента вкладок не узнаёт о запуске канала).
+    var onStateChange: (() -> Void)?
 
     private var stdinWriter: TTYStdinWriter?
     var task: Task<Void, Never>?
     /// Последний известный размер — используется при переоткрытии канала.
     var cols: Int = 80
     var rows: Int = 24
+    /// Команда сразу после открытия shell (стартовый cd из настроек сессии).
+    /// Шлётся при каждом (пере)открытии канала.
+    var initialCommand: String?
 
     var displayTitle: String {
         if let t = title, !t.isEmpty { return t }
@@ -95,6 +103,11 @@ final class TerminalChannel: ObservableObject, Identifiable {
         ) { ttyOutput, stdinWriter in
             guard isCurrent() else { return }
             self.stdinWriter = stdinWriter
+            if let cmd = self.initialCommand {
+                var buf = ByteBufferAllocator().buffer(capacity: cmd.utf8.count)
+                buf.writeString(cmd)
+                try? await stdinWriter.write(buf)
+            }
             for try await chunk in ttyOutput {
                 guard isCurrent() else { return }
                 let buffer: ByteBuffer
@@ -145,7 +158,24 @@ final class SSHConnection: ObservableObject {
     private let keyProvider: (UUID) -> SSHKey?
 
     private var client: SSHClient?
-    private(set) var sftp: SFTPClient?
+    @Published private(set) var sftp: SFTPClient?
+    /// Причина недоступности SFTP при живом соединении (nil — всё ок).
+    @Published private(set) var sftpError: String?
+
+    /// Повторная попытка поднять SFTP на живом соединении
+    /// (например, после установки openssh-sftp-server).
+    func retrySFTP() {
+        guard let client, status == .connected, sftp == nil else { return }
+        Task {
+            do {
+                let opened = try await client.openSFTP()
+                self.sftp = opened
+                self.sftpError = nil
+            } catch {
+                self.sftpError = String(describing: error)
+            }
+        }
+    }
 
     /// Активность любой вкладки (маячок в сайдбаре).
     var onActivity: (() -> Void)?
@@ -182,7 +212,14 @@ final class SSHConnection: ObservableObject {
     func addChannel() -> TerminalChannel {
         let ch = TerminalChannel()
         ch.index = (channels.map(\.index).max() ?? 0) + 1
+        // Стартовый каталог терминала из настроек сессии.
+        if let dir = session.extra["termPath"]?.trimmingCharacters(in: .whitespaces),
+           !dir.isEmpty {
+            let escaped = dir.replacingOccurrences(of: "'", with: "'\\''")
+            ch.initialCommand = "cd '\(escaped)'\n"
+        }
         ch.onActivity = { [weak self] in self?.onActivity?() }
+        ch.onStateChange = { [weak self] in self?.objectWillChange.send() }
         channels.append(ch)
         // Соединение живо — открываем канал сразу.
         if let client, status == .connected {
@@ -203,6 +240,83 @@ final class SSHConnection: ObservableObject {
     /// Рассылка во все вкладки этой ноды.
     func sendToAllChannels(_ data: ArraySlice<UInt8>) {
         for ch in channels { ch.send(data) }
+    }
+
+    enum ExecError: LocalizedError {
+        case notConnected
+        var errorDescription: String? { "Нода не подключена" }
+    }
+
+    /// Выполнить команду поверх живого соединения (отдельный exec-канал,
+    /// терминальные вкладки не затрагивает). Возвращает вывод.
+    func exec(_ command: String) async throws -> String {
+        guard let client, status == .connected else { throw ExecError.notConnected }
+        let buffer = try await client.executeCommand(command)
+        return String(buffer: buffer)
+    }
+
+    // MARK: - Файловые примитивы (SFTP, а без него — exec + base64)
+
+    static func shellEscape(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    enum FileOpError: LocalizedError {
+        case base64Failed(String)
+        var errorDescription: String? {
+            switch self {
+            case .base64Failed(let out):
+                return "base64 на сервере не отработал: \(out.prefix(120))"
+            }
+        }
+    }
+
+    /// Чтение файла: SFTP, иначе `base64` через exec (бинарно-безопасно).
+    func readFile(path: String) async throws -> Data {
+        if let sftp {
+            let buffer = try await sftp.withFile(filePath: path, flags: .read) { file in
+                try await file.readAll()
+            }
+            return Data(buffer: buffer)
+        }
+        let out = try await exec("base64 \(Self.shellEscape(path))")
+        let cleaned = out.filter { !$0.isNewline && $0 != " " }
+        guard let data = Data(base64Encoded: cleaned) else {
+            throw FileOpError.base64Failed(out)
+        }
+        return data
+    }
+
+    /// Запись файла: SFTP, иначе чанки base64 через exec (`printf | base64 -d`).
+    func writeFile(path: String, data: Data) async throws {
+        if let sftp {
+            try await sftp.withFile(
+                filePath: path,
+                flags: [.write, .create, .truncate]
+            ) { file in
+                try await file.write(ByteBuffer(data: data), at: 0)
+            }
+            return
+        }
+        let esc = Self.shellEscape(path)
+        let b64 = data.base64EncodedString()
+        // Чанк маленький: у dropbear лимит длины команды ~9000 символов
+        // (MAX_CMD_LEN) — длиннее он рвёт ВСЁ соединение. 6000 base64-символов
+        // + обвязка printf укладываются с запасом; кратно 4 — каждый чанк
+        // декодится сам по себе.
+        let chunkSize = 6_000
+        var start = b64.startIndex
+        var first = true
+        repeat {
+            let end = b64.index(start, offsetBy: chunkSize, limitedBy: b64.endIndex) ?? b64.endIndex
+            let chunk = String(b64[start..<end])
+            let redirect = first ? ">" : ">>"
+            let out = try await exec("printf '%s' '\(chunk)' | base64 -d \(redirect) \(esc) 2>&1")
+            let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { throw FileOpError.base64Failed(trimmed) }
+            first = false
+            start = end
+        } while start < b64.endIndex
     }
 
     private func startChannel(_ ch: TerminalChannel, client: SSHClient, gen: Int) {
@@ -287,9 +401,18 @@ final class SSHConnection: ObservableObject {
                     }
                 }
 
-                let sftp = try await client.openSFTP()
-                guard gen == self.generation else { try? await client.close(); return }
-                self.sftp = sftp
+                // SFTP опционален: дропбир без openssh-sftp-server отказывает
+                // подсистеме. Терминал живёт, проводник показывает подсказку.
+                do {
+                    let sftp = try await client.openSFTP()
+                    guard gen == self.generation else { try? await client.close(); return }
+                    self.sftp = sftp
+                    self.sftpError = nil
+                } catch {
+                    guard gen == self.generation else { try? await client.close(); return }
+                    self.sftp = nil
+                    self.sftpError = String(describing: error)
+                }
 
                 self.status = .connected
                 self.wasConnected = true

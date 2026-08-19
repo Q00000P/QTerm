@@ -25,6 +25,9 @@ struct EditSessionView: View {
     @State private var privateKeyPath: String
     @State private var secret: String = ""       // пароль или passphrase
     @State private var secretTouched = false
+    @State private var termPath: String
+    @State private var sftpPath: String
+    @State private var showKeys = false
 
     init(session: Session?, onSave: @escaping (Session) -> Void) {
         self.existing = session
@@ -40,6 +43,8 @@ struct EditSessionView: View {
             _keySource = State(initialValue: .file)
         }
         _privateKeyPath = State(initialValue: session?.privateKeyPath ?? "")
+        _termPath = State(initialValue: session?.extra["termPath"] ?? "")
+        _sftpPath = State(initialValue: session?.extra["sftpPath"] ?? "")
     }
 
     var body: some View {
@@ -60,11 +65,15 @@ struct EditSessionView: View {
                 .pickerStyle(.segmented)
 
                 if authMethod == .privateKey {
-                    Picker("Ключ", selection: $keySource) {
-                        ForEach(state.sshKeys) { key in
-                            Text("🔑 \(key.name)").tag(KeySource.vault(key.id))
+                    HStack {
+                        Picker("Ключ", selection: $keySource) {
+                            ForEach(state.sshKeys) { key in
+                                Text("🔑 \(key.name)").tag(KeySource.vault(key.id))
+                            }
+                            Text("Файл на диске…").tag(KeySource.file)
                         }
-                        Text("Файл на диске…").tag(KeySource.file)
+                        Button("Ключи…") { showKeys = true }
+                            .help("Хранилище ключей: отпечатки, публичные части, импорт")
                     }
 
                     if case .file = keySource {
@@ -76,7 +85,7 @@ struct EditSessionView: View {
                         }
                     }
 
-                    SecureField(passphrasePrompt, text: $secret)
+                    SecureField("Passphrase", text: $secret, prompt: Text(passphrasePrompt))
                         .onChange(of: secret) { _, _ in secretTouched = true }
                 } else {
                     SecureField("Пароль", text: $secret)
@@ -87,6 +96,14 @@ struct EditSessionView: View {
                     Text("Из мобы: \(hint)")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
+
+                Divider()
+
+                TextField("Каталог терминала", text: $termPath, prompt: Text("/opt/etc"))
+                TextField("Путь проводника", text: $sftpPath, prompt: Text("/opt/etc/mihomo"))
+                Text("Стартовые пути на сервере (вводятся руками): терминал делает cd после входа, проводник открывается в каталоге. Пусто — домашний / /root.")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack {
@@ -99,15 +116,19 @@ struct EditSessionView: View {
             }
         }
         .padding(16)
-        .frame(width: 440)
+        .frame(width: 540)
+        .sheet(isPresented: $showKeys) {
+            KeyManagerView()
+                .environmentObject(state)
+        }
     }
 
     private var passphrasePrompt: String {
         if case .vault(let id) = keySource,
            state.secrets.passphrase(forKeyID: id) != nil {
-            return "Passphrase (уже сохранена — можно не вводить)"
+            return "уже сохранена — можно не вводить"
         }
-        return "Passphrase (если есть)"
+        return "если есть"
     }
 
     private func pickKeyPath() {
@@ -157,6 +178,13 @@ struct EditSessionView: View {
             }
         }
 
+        // Стартовые пути — в extra; остальные ключи (mobaKeyPath, hostkey…) не трогаем.
+        var extra = existing?.extra ?? [:]
+        let term = termPath.trimmingCharacters(in: .whitespaces)
+        let sftp = sftpPath.trimmingCharacters(in: .whitespaces)
+        extra["termPath"] = term.isEmpty ? nil : term
+        extra["sftpPath"] = sftp.isEmpty ? nil : sftp
+
         let session = Session(
             id: existing?.id ?? UUID(),
             name: name.isEmpty ? host : name,
@@ -166,7 +194,7 @@ struct EditSessionView: View {
             authMethod: authMethod,
             keyID: keyID,
             privateKeyPath: keyPath,
-            extra: existing?.extra ?? [:]
+            extra: extra
         )
 
         if secretTouched && !secret.isEmpty {

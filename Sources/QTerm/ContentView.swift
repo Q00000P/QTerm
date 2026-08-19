@@ -7,16 +7,23 @@ struct ContentView: View {
     @State private var showAdd = false
     @State private var showSnippetEditor = false
     @State private var stripHeight: CGFloat = 30
+    /// Ширина проводника — запоминается между запусками.
+    @AppStorage("browserWidth") private var browserWidth: Double = 310
+    @State private var dragStartWidth: Double?
 
     var body: some View {
         HSplitView {
             sidebar
-                .frame(minWidth: 220, maxWidth: 300)
+                .frame(minWidth: 200, idealWidth: 220, maxWidth: 280)
             workspace
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .sheet(isPresented: $showAdd) {
             EditSessionView(session: nil) { state.upsert($0) }
+                .environmentObject(state)
+        }
+        .sheet(isPresented: $state.showKeyManager) {
+            KeyManagerView()
                 .environmentObject(state)
         }
         .sheet(item: $editingSession) { s in
@@ -145,14 +152,38 @@ struct ContentView: View {
                     .padding(.top, 4)
                 Divider()
                 statusBar
-                HSplitView {
+                // Свой сплит вместо HSplitView: тот делит место пропорционально
+                // и раздувает проводник. Здесь ширина проводника фиксирована,
+                // запоминается и таскается за разделитель; терминал — всё остальное.
+                HStack(spacing: 0) {
                     terminalArea
                         .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                    browserSplitter
                     browserArea
-                        .frame(minWidth: 240, idealWidth: 320)
+                        .frame(width: browserWidth)
                 }
             }
         }
+    }
+
+    /// Разделитель терминал/проводник: тянется, ширина проводника 240–600.
+    private var browserSplitter: some View {
+        Rectangle()
+            .fill(Color.gray.opacity(0.25))
+            .frame(width: 3)
+            .contentShape(Rectangle().inset(by: -3))
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if dragStartWidth == nil { dragStartWidth = browserWidth }
+                        let proposed = (dragStartWidth ?? browserWidth) - value.translation.width
+                        browserWidth = min(600, max(240, proposed))
+                    }
+                    .onEnded { _ in dragStartWidth = nil }
+            )
     }
 
     /// Все терминалы живут одновременно; показывается активная вкладка.
@@ -174,7 +205,7 @@ struct ContentView: View {
     @ViewBuilder
     private var browserArea: some View {
         if let tab = state.activeTab, let conn = state.connections[tab.sessionID] {
-            SFTPBrowserView(connection: conn)
+            SFTPBrowserView(connection: conn, browser: state.browser(for: conn))
                 .id(tab.sessionID)
         } else {
             Color.clear
@@ -345,6 +376,15 @@ struct ContentView: View {
             }
             .buttonStyle(.borderless)
             .help("Очистить экран и весь скроллбек этой вкладки")
+
+            Button {
+                state.confirmCloseAllTabs()
+            } label: {
+                Image(systemName: "xmark.rectangle.portrait").font(.body)
+            }
+            .buttonStyle(.borderless)
+            .help("Закрыть все вкладки всех нод (соединения рвутся)")
+            .disabled(state.tabs.isEmpty)
 
             if state.broadcastMode == .allNodes {
                 Text("СКВОЗНОЙ ВВОД: печать уходит во все подключённые ноды")
