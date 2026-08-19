@@ -4,3 +4,8 @@ build/
 *.xcodeproj
 .swiftpm/
 *.zip
+.build/
+build/
+.DS_Store
+*.xcodeproj
+.swiftpm/
