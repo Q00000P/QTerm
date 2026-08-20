@@ -29,6 +29,8 @@ struct QTermApp: App {
                 Button("Экспорт в MobaXterm…") { state.exportToMoba() }
                 Divider()
                 Button("Ключи…") { state.showKeyManager = true }
+                Button("Синхронизация…") { state.showSyncSettings = true }
+                Button("Журнал команд…") { state.showCommandLog = true }
                 Button("Импортировать ключ в хранилище…") { state.importKeyFile() }
                 Button("Назначить ключ нодам без ключа…") { state.assignKeyToOrphans() }
                 Button("Задать passphrase ключа…") { state.setKeyPassphrase() }
@@ -127,6 +129,18 @@ final class AppState: ObservableObject {
     /// Экран управления ключами (Данные → Ключи…).
     @Published var showKeyManager = false
     @Published var snippets: [Snippet] = []
+    /// Журнал команд для подсказок (синкается; кап 500).
+    @Published var cmdHistory: [String: CmdStat] = [:]
+    /// Восстановление набираемой строки активной вкладки.
+    let cmdTracker = CommandTracker()
+    /// Префикс набора для полосы подсказок (зеркало трекера).
+    @Published var cmdPrefix = ""
+    /// Выделенная строка панели подсказок (-1 = нет).
+    @Published var suggestionSelection = -1
+    /// Панель закрыта по Esc — до следующего изменения набора.
+    @Published var suggestionsSuppressed = false
+    /// Диагностика: трекер потерял строку (стрелки/Tab) — ждёт Enter/^C/^U.
+    @Published var trackerDirty = false
     /// Приватные ключи из вейлта.
     @Published var sshKeys: [SSHKey] = []
 
@@ -141,11 +155,31 @@ final class AppState: ObservableObject {
         return e
     }()
 
+    /// Синк вейлта (WebDAV, QTS1 — общий формат с Android).
+    lazy var syncEngine: SyncEngine = {
+        let e = SyncEngine(store: store)
+        e.app = self
+        return e
+    }()
+    @Published var showSyncSettings = false
+    @Published var showCommandLog = false
+
+    /// Живые записи (tombstones скрыты, но синкаются).
+    var visibleSessions: [Session] { sessions.filter { $0.deleted != true } }
+    var visibleKeys: [SSHKey] { sshKeys.filter { $0.deleted != true } }
+    var visibleSnippets: [Snippet] { snippets.filter { $0.deleted != true } }
+
+    static func nowISO() -> String {
+        ISO8601DateFormatter().string(from: Date())
+    }
+
     init() {
         loadVault()
     }
 
     // MARK: - Вкладки
+
+    func noteActiveTabChanged() { cmdTracker.reset() }
 
     var activeTab: Tab? {
         tabs.first { $0.id == activeTabID }
@@ -304,30 +338,180 @@ final class AppState: ObservableObject {
     // MARK: - Вейлт
 
     func loadVault() {
+        cmdTracker.onCommand = { [weak self] cmd in self?.recordCommand(cmd) }
+        cmdTracker.onStateChange = { [weak self] p, dirty in
+            guard let self else { return }
+            if trackerDirty != dirty { trackerDirty = dirty }
+            if cmdPrefix != p {
+                cmdPrefix = p
+                suggestionSelection = -1
+                suggestionsSuppressed = false
+            }
+        }
         do {
             let vault = try store.initializeIfNeeded()
             sessions = vault.sessions
             snippets = vault.snippets ?? []
             sshKeys = vault.sshKeys ?? []
+            cmdHistory = vault.cmdHistory ?? [:]
             vaultError = nil
         } catch {
             vaultError = "Не удалось открыть хранилище: \(error)"
         }
     }
 
+    struct CommandSuggestion { let text: String; let personal: Bool }
+
+    /// Похоже ли на shell-команду. Отсекает ввод в интерактивные программы:
+    /// пункты меню («28»), y/n-ответы, числа, пароли из спецсимволов.
+    static func isLikelyCommand(_ cmd: String) -> Bool {
+        guard cmd.count >= 2 else { return false }
+        guard let first = cmd.split(separator: " ").first else { return false }
+        // Первое слово начинается с буквы, точки, / или ~ (имя программы/путь)…
+        guard let head = first.first,
+              head.isLetter || head == "." || head == "/" || head == "~" else { return false }
+        // …и состоит из символов, встречающихся в именах команд.
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:+/~-")
+        guard first.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return false }
+        // Односложные подтверждения — не команды.
+        let stopWords: Set<String> = ["y", "n", "yes", "no", "q", "да", "нет"]
+        if stopWords.contains(cmd.lowercased()) { return false }
+        return true
+    }
+
+    /// Enter в терминале: команда — в журнал. Пуша на каждый Enter нет
+    /// (как на Android) — уедет со следующим обычным синком.
+    func recordCommand(_ cmd: String) {
+        guard Self.isLikelyCommand(cmd) else { return }
+        var stat = cmdHistory[cmd] ?? CmdStat()
+        if stat.deleted == true { stat = CmdStat() } // воскрешение после удаления
+        stat.count += 1
+        stat.lastUsed = Self.nowISO()
+        cmdHistory[cmd] = stat
+        if cmdHistory.count > 500 {
+            // Кап: выкидываем самые давние.
+            let sorted = cmdHistory.sorted { ($0.value.lastUsed ?? "") > ($1.value.lastUsed ?? "") }
+            cmdHistory = Dictionary(uniqueKeysWithValues: sorted.prefix(500).map { ($0.key, $0.value) })
+        }
+        do { try store.save(cmdHistory: cmdHistory) }
+        catch { vaultError = "Не удалось сохранить журнал команд: \(error)" }
+    }
+
+    /// Удалить команду из журнала (tombstone — уедет синком на все устройства).
+    func deleteCommand(_ cmd: String) {
+        cmdHistory[cmd] = CmdStat(count: 0, lastUsed: Self.nowISO(), deleted: true)
+        do { try store.save(cmdHistory: cmdHistory) }
+        catch { vaultError = "Не удалось сохранить журнал команд: \(error)" }
+        syncEngine.schedulePush()
+    }
+
+    /// Очистить весь журнал (tombstone на каждую запись).
+    func clearCommandLog() {
+        let now = Self.nowISO()
+        for key in cmdHistory.keys {
+            cmdHistory[key] = CmdStat(count: 0, lastUsed: now, deleted: true)
+        }
+        do { try store.save(cmdHistory: cmdHistory) }
+        catch { vaultError = "Не удалось сохранить журнал команд: \(error)" }
+        syncEngine.schedulePush()
+    }
+
+    /// Живые записи журнала (для инструмента правки).
+    var visibleCmdHistory: [(cmd: String, stat: CmdStat)] {
+        cmdHistory
+            .filter { $0.value.deleted != true }
+            .map { (cmd: $0.key, stat: $0.value) }
+            .sorted {
+                if $0.stat.count != $1.stat.count { return $0.stat.count > $1.stat.count }
+                return ($0.stat.lastUsed ?? "") > ($1.stat.lastUsed ?? "")
+            }
+    }
+
+    /// Подсказки: свои (частота, свежесть) первыми, затем словарь; до 8.
+    func commandSuggestions(for prefix: String) -> [CommandSuggestion] {
+        let personal = cmdHistory
+            .filter { $0.value.deleted != true && $0.key.hasPrefix(prefix) && $0.key != prefix }
+            .sorted {
+                if $0.value.count != $1.value.count { return $0.value.count > $1.value.count }
+                return ($0.value.lastUsed ?? "") > ($1.value.lastUsed ?? "")
+            }
+            .map { CommandSuggestion(text: $0.key, personal: true) }
+        let dict = CommandDict.common
+            .filter { $0.hasPrefix(prefix) && $0 != prefix }
+            .map { CommandSuggestion(text: $0, personal: false) }
+        var seen = Set<String>()
+        return (personal + dict).filter { seen.insert($0.text).inserted }.prefix(8).map { $0 }
+    }
+
+    /// Панель видна и готова принимать клавиши.
+    var suggestionsActive: Bool {
+        !suggestionsSuppressed && cmdPrefix.count >= 1
+            && !commandSuggestions(for: cmdPrefix).isEmpty
+    }
+
+    /// Перехват клавиш при открытой панели: стрелки/Enter/Tab/Esc.
+    /// true = проглочено, в канал и трекер не отправлять.
+    func handleSuggestionKey(_ data: ArraySlice<UInt8>) -> Bool {
+        guard suggestionsActive else { return false }
+        let bytes = Array(data)
+        let items = Array(commandSuggestions(for: cmdPrefix).prefix(6))
+        let isDown = bytes == [0x1b, 0x5b, 0x42] || bytes == [0x1b, 0x4f, 0x42]
+        let isUp   = bytes == [0x1b, 0x5b, 0x41] || bytes == [0x1b, 0x4f, 0x41]
+        if isDown {
+            suggestionSelection = min(suggestionSelection + 1, items.count - 1)
+            return true
+        }
+        if isUp {
+            if suggestionSelection <= -1 { return true } // выше некуда — но в шелл не отдаём
+            suggestionSelection -= 1
+            return true
+        }
+        if bytes == [0x1b] { // Esc — закрыть до следующего ввода
+            suggestionsSuppressed = true
+            suggestionSelection = -1
+            return true
+        }
+        if (bytes == [0x0d] || bytes == [0x09]), suggestionSelection >= 0,
+           suggestionSelection < items.count {
+            // Enter/Tab по выделенной: вставить остаток, НЕ выполнять.
+            let chosen = items[suggestionSelection].text
+            suggestionSelection = -1
+            sendSuggestionRemainder(chosen, typedPrefix: cmdPrefix)
+            return true
+        }
+        return false
+    }
+
+    /// Клик по чипу: дослать ОСТАТОК команды в активную вкладку.
+    func sendSuggestionRemainder(_ full: String, typedPrefix: String) {
+        guard let tab = activeTab, let ch = channel(for: tab) else { return }
+        let remainder = String(full.dropFirst(typedPrefix.count))
+        let bytes = Array(remainder.utf8)
+        ch.send(bytes[...])
+        cmdTracker.feed(bytes[...])
+        // Клик по панели увёл фокус из терминала — вернуть.
+        if let tv = terminals[tab.id] {
+            tv.window?.makeFirstResponder(tv)
+        }
+    }
+
     func addSnippet(title: String, command: String) {
-        snippets.append(Snippet(title: title, command: command))
+        snippets.append(Snippet(title: title, command: command, updatedAt: Self.nowISO()))
         persistSnippets()
     }
 
     func deleteSnippet(_ snippet: Snippet) {
-        snippets.removeAll { $0.id == snippet.id }
+        if let i = snippets.firstIndex(where: { $0.id == snippet.id }) {
+            snippets[i].deleted = true
+            snippets[i].updatedAt = Self.nowISO()
+        }
         persistSnippets()
     }
 
     private func persistSnippets() {
         do { try store.save(snippets: snippets) }
         catch { vaultError = "Не удалось сохранить сниппеты: \(error)" }
+        syncEngine.schedulePush()
     }
 
     func persist() {
@@ -336,13 +520,17 @@ final class AppState: ObservableObject {
         } catch {
             vaultError = "Не удалось сохранить хранилище: \(error)"
         }
+        syncEngine.schedulePush()
     }
 
     func upsert(_ session: Session) {
+        var stamped = session
+        stamped.updatedAt = Self.nowISO()
+        stamped.deleted = nil
         if let i = sessions.firstIndex(where: { $0.id == session.id }) {
-            sessions[i] = session
+            sessions[i] = stamped
         } else {
-            sessions.append(session)
+            sessions.append(stamped)
         }
         persist()
     }
@@ -360,7 +548,12 @@ final class AppState: ObservableObject {
         connectionSubs[session.id] = nil
         browsers[session.id]?.stopWatchers()
         browsers.removeValue(forKey: session.id)
-        sessions.removeAll { $0.id == session.id }
+        // Tombstone вместо физического удаления — иначе синк воскресит запись
+        // с устройства, не знавшего об удалении.
+        if let i = sessions.firstIndex(where: { $0.id == session.id }) {
+            sessions[i].deleted = true
+            sessions[i].updatedAt = Self.nowISO()
+        }
         secrets.deleteAll(for: session.id)
         persist()
     }
@@ -572,18 +765,22 @@ final class AppState: ObservableObject {
     }
 
     func deleteKey(_ key: SSHKey) {
-        sshKeys.removeAll { $0.id == key.id }
+        if let i = sshKeys.firstIndex(where: { $0.id == key.id }) {
+            sshKeys[i].deleted = true
+            sshKeys[i].updatedAt = Self.nowISO()
+        }
         secrets.deletePassphrase(forKeyID: key.id)
         persistKeys()
     }
 
     func sessionsUsing(_ key: SSHKey) -> [Session] {
-        sessions.filter { $0.keyID == key.id }
+        visibleSessions.filter { $0.keyID == key.id }
     }
 
     func renameKey(_ key: SSHKey, to newName: String) {
         guard let i = sshKeys.firstIndex(where: { $0.id == key.id }) else { return }
         sshKeys[i].name = newName
+        sshKeys[i].updatedAt = Self.nowISO()
         persistKeys()
     }
 
@@ -601,6 +798,7 @@ final class AppState: ObservableObject {
     func persistKeysPublic() { persistKeys() }
 
     private func persistKeys() {
+        defer { syncEngine.schedulePush() }
         do { try store.save(sshKeys: sshKeys) }
         catch { vaultError = "Не удалось сохранить ключи: \(error)" }
     }
@@ -657,6 +855,9 @@ final class AppState: ObservableObject {
     /// true — экран и весь скроллбек.
     func clearActiveTerminal(includeScrollback: Bool) {
         guard let tab = activeTab, let tv = terminals[tab.id] else { return }
+        // Очистка шлёт \n в канал мимо трекера — сбрасываем его буфер,
+        // иначе дальнейший ввод клеится к недонабранному хвосту.
+        cmdTracker.reset()
         let terminal = tv.getTerminal()
         if includeScrollback {
             // ESC[3J вычищает скроллбек, ESC[2J — экран, ESC[H — курсор домой.

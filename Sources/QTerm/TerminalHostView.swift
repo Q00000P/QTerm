@@ -79,6 +79,8 @@ struct TerminalHostView: NSViewRepresentable {
                     connection.retryNow()
                     return
                 }
+                if state.handleSuggestionKey(data) { return }
+                state.cmdTracker.feed(data)
                 switch state.broadcastMode {
                 case .off:
                     channel.send(data)

@@ -93,7 +93,7 @@ struct KeyManagerView: View {
                 }
             }
 
-            if state.sshKeys.isEmpty {
+            if state.visibleKeys.isEmpty {
                 ContentUnavailableView(
                     "Хранилище пусто",
                     systemImage: "key",
@@ -101,7 +101,7 @@ struct KeyManagerView: View {
                 )
                 .frame(maxHeight: .infinity)
             } else {
-                List(state.sshKeys) { key in
+                List(state.visibleKeys) { key in
                     keyRow(key)
                 }
                 .listStyle(.inset)

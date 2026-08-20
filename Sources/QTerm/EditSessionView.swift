@@ -67,7 +67,7 @@ struct EditSessionView: View {
                 if authMethod == .privateKey {
                     HStack {
                         Picker("Ключ", selection: $keySource) {
-                            ForEach(state.sshKeys) { key in
+                            ForEach(state.visibleKeys) { key in
                                 Text("🔑 \(key.name)").tag(KeySource.vault(key.id))
                             }
                             Text("Файл на диске…").tag(KeySource.file)

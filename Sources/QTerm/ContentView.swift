@@ -26,6 +26,16 @@ struct ContentView: View {
             KeyManagerView()
                 .environmentObject(state)
         }
+        .sheet(isPresented: $state.showSyncSettings) {
+            SyncSettingsView(engine: state.syncEngine)
+                .environmentObject(state)
+        }
+        .sheet(isPresented: $state.showCommandLog) {
+            CommandLogView()
+                .environmentObject(state)
+        }
+        .task { state.syncEngine.pullOnLaunch() }
+        .onChange(of: state.activeTabID) { _, _ in state.noteActiveTabChanged() }
         .sheet(item: $editingSession) { s in
             EditSessionView(session: s) { state.upsert($0) }
                 .environmentObject(state)
@@ -40,7 +50,7 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             List {
-                ForEach(state.sessions) { session in
+                ForEach(state.visibleSessions) { session in
                     let isActiveNode = state.activeSessionID == session.id
                     HStack {
                         statusDot(for: session)
@@ -188,7 +198,7 @@ struct ContentView: View {
 
     /// Все терминалы живут одновременно; показывается активная вкладка.
     private var terminalArea: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             ForEach(state.tabs) { tab in
                 if let conn = state.connections[tab.sessionID],
                    let ch = state.channel(for: tab) {
@@ -197,6 +207,7 @@ struct ContentView: View {
                         .allowsHitTesting(tab.id == state.activeTabID)
                 }
             }
+            SuggestionOverlay()
         }
     }
 
@@ -250,7 +261,7 @@ struct ContentView: View {
             .help("Ещё одна вкладка текущей ноды (⌘T)")
 
             Menu {
-                ForEach(state.sessions) { session in
+                ForEach(state.visibleSessions) { session in
                     let nodeTabs = state.tabs.filter { $0.sessionID == session.id }
                     if !nodeTabs.isEmpty {
                         Section(session.name) {
@@ -279,24 +290,29 @@ struct ContentView: View {
 
     private func tabChip(_ tab: Tab) -> some View {
         let isActive = tab.id == state.activeTabID
-        return HStack(spacing: 5) {
+        return HStack(spacing: 7) {
             Circle()
                 .fill(dotColor(for: tab))
-                .frame(width: 5, height: 5)
+                .frame(width: 7, height: 7)
             Text(state.title(for: tab))
-                .font(.caption)
+                .font(.callout)
                 .lineLimit(1)
             Button {
                 state.close(tab)
             } label: {
-                Image(systemName: "xmark").font(.system(size: 8))
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 18, height: 18)   // зона клика, а не квест
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
+            .help("Закрыть вкладку (⌘W)")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.leading, 11)
+        .padding(.trailing, 5)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 5)
+            RoundedRectangle(cornerRadius: 6)
                 .fill(isActive ? Color.accentColor.opacity(0.28) : Color.gray.opacity(0.12))
         )
         .contentShape(Rectangle())
@@ -332,6 +348,19 @@ struct ContentView: View {
 
     private var controlBar: some View {
         HStack(spacing: 12) {
+            // Переподключить активную ноду без потери терминала: скроллбек
+            // остаётся, новый shell продолжает в том же экране.
+            if let tab = state.activeTab, let conn = state.connections[tab.sessionID] {
+                Button {
+                    conn.reconnect()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .foregroundStyle(conn.status == .connected ? Color.secondary : Color.orange)
+                }
+                .buttonStyle(.borderless)
+                .help("Переподключить ноду (терминал и вывод сохраняются)")
+            }
+
             Picker("", selection: $state.broadcastMode) {
                 ForEach(BroadcastMode.allCases, id: \.self) { mode in
                     Text(mode.title).tag(mode)
@@ -341,11 +370,22 @@ struct ContentView: View {
             .fixedSize()
             .help("Куда уходит ввод с клавиатуры")
 
+            // Диагностика трекера подсказок: что он видит прямо сейчас.
+            if state.trackerDirty {
+                Text("⌫ строка неизвестна — Enter/^C/^U вернёт подсказки")
+                    .font(.caption2).foregroundStyle(.orange)
+            } else if !state.cmdPrefix.isEmpty {
+                Text("⌨ \(state.cmdPrefix)")
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
             Menu {
                 if state.snippets.isEmpty {
                     Text("Пусто — добавь команду")
                 }
-                ForEach(state.snippets) { snip in
+                ForEach(state.visibleSnippets) { snip in
                     Menu(snip.title) {
                         Button("→ В эту вкладку") { send(snip, toAll: false) }
                         Button("⇉ Во все ноды") { send(snip, toAll: true) }
@@ -541,7 +581,7 @@ struct SnippetEditorView: View {
             Text("Сниппеты").font(.headline)
 
             List {
-                ForEach(state.snippets) { snip in
+                ForEach(state.visibleSnippets) { snip in
                     HStack {
                         VStack(alignment: .leading) {
                             Text(snip.title).fontWeight(.medium)
