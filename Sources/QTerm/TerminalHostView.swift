@@ -26,7 +26,11 @@ struct TerminalHostView: NSViewRepresentable {
             return existing
         }
 
-        let tv = TerminalView(frame: .zero)
+        // Скроллбек: у SwiftTerm по умолчанию всего 500 строк — длинные
+        // прогоны обрезались. Постоянный ползунок (.legacy) — для быстрой
+        // прокрутки мышью.
+        let tv = TerminalView(frame: .zero, font: nil, options: TerminalOptions(scrollback: QTermTerminal.scrollbackLines))
+        tv.scrollerStyle = .legacy
         tv.terminalDelegate = context.coordinator
         context.coordinator.terminalView = tv
         tv.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -112,5 +116,20 @@ struct TerminalHostView: NSViewRepresentable {
             if let url = URL(string: link) { NSWorkspace.shared.open(url) }
         }
         func bell(source: TerminalView) { NSSound.beep() }
+    }
+}
+
+
+/// Общие параметры терминалов (SSH и локального).
+enum QTermTerminal {
+    static let scrollbackKey = "scrollbackLines"
+    static let scrollbackDefault = 20_000
+    static let scrollbackRange = 50...1_000_000
+
+    /// Строк истории на вкладку (настраивается, применяется к НОВЫМ вкладкам).
+    static var scrollbackLines: Int {
+        let stored = UserDefaults.standard.integer(forKey: scrollbackKey)
+        guard stored > 0 else { return scrollbackDefault }
+        return min(max(stored, scrollbackRange.lowerBound), scrollbackRange.upperBound)
     }
 }

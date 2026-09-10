@@ -620,7 +620,7 @@ struct SFTPBrowserView: View {
 
     /// Двойной клик по файлу: скачиваем в память → вкладка в окне редактора.
     private func openInEditor(_ entry: RemoteEntry) {
-        guard entry.size <= EditorState.maxEditableSize else {
+        guard entry.size <= EditorBridge.maxEditableSize else {
             browser.errorText = "«\(entry.name)» больше 2 МБ — открой через скачивание"
             return
         }

@@ -4,8 +4,33 @@ import SwiftTerm
 import Combine
 import SessionVaultKit
 
+/// Делегат приложения: меню в доке (правый клик по иконке) — оттуда
+/// поднимается окно редактора. Своей иконки в доке у вспомогательного окна
+/// macOS не даёт, поэтому пункт живёт в док-меню основного приложения.
+final class QTermAppDelegate: NSObject, NSApplicationDelegate {
+    weak var state: AppState?
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let item = NSMenuItem(
+            title: "Окно редактора",
+            action: #selector(openEditor),
+            keyEquivalent: ""
+        )
+        item.target = self
+        menu.addItem(item)
+        return menu
+    }
+
+    @MainActor
+    @objc private func openEditor() {
+        state?.editor.focusEditor()
+    }
+}
+
 @main
 struct QTermApp: App {
+    @NSApplicationDelegateAdaptor(QTermAppDelegate.self) private var appDelegate
     @StateObject private var state = AppState()
     @Environment(\.openWindow) private var openWindow
 
@@ -29,6 +54,9 @@ struct QTermApp: App {
                 Button("Экспорт в MobaXterm…") { state.exportToMoba() }
                 Divider()
                 Button("Ключи…") { state.showKeyManager = true }
+                Button("Локальный терминал") { state.openLocalTab() }
+                    .keyboardShortcut("l", modifiers: [.command])
+                Divider()
                 Button("Синхронизация…") { state.showSyncSettings = true }
                 Button("Журнал команд…") { state.showCommandLog = true }
                 Button("Импортировать ключ в хранилище…") { state.importKeyFile() }
@@ -39,20 +67,13 @@ struct QTermApp: App {
                 Button("Импорт вейлта из файла…") { state.importVaultFromFile() }
             }
             CommandGroup(after: .newItem) {
-                Button("Окно редактора") { openWindow(id: "editor") }
+                Button("Редактор") { state.editor.focusEditor() }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
                 Divider()
                 Button("Новая вкладка") { state.duplicateActiveTab() }
                     .keyboardShortcut("t", modifiers: .command)
-                Button("Закрыть вкладку") {
-                    // Ключевое окно — редактор: ⌘W закрывает вкладку файла,
-                    // а не терминала за спиной.
-                    if state.editor.isKeyWindow {
-                        state.editor.closeActiveDocument()
-                    } else {
-                        state.closeActiveTab()
-                    }
-                }
+                // Редактор — отдельное приложение, своё ⌘W у него своё.
+                Button("Закрыть вкладку") { state.closeActiveTab() }
                     .keyboardShortcut("w", modifiers: .command)
                 Divider()
                 Button("Следующая вкладка") { state.cycleTab(+1) }
@@ -67,13 +88,6 @@ struct QTermApp: App {
             }
         }
 
-        // Окно редактора удалённых файлов (открывается из проводника).
-        Window("Редактор — QTerm", id: "editor") {
-            EditorWindowView(editor: state.editor)
-                .environmentObject(state)
-                .frame(minWidth: 720, minHeight: 440)
-        }
-        .defaultSize(width: 980, height: 660)
     }
 }
 
@@ -129,8 +143,19 @@ final class AppState: ObservableObject {
     /// Экран управления ключами (Данные → Ключи…).
     @Published var showKeyManager = false
     @Published var snippets: [Snippet] = []
-    /// Журнал команд для подсказок (синкается; кап 500).
+    /// Псевдо-нода «Локальный терминал» (в вейлт и синк НЕ пишется).
+    static let localSessionID = UUID(uuidString: "00000000-0000-0000-0000-00000000700C")!
+    /// Живые вьюхи локальных терминалов по вкладке.
+    var localTerminals: [UUID: TrackedLocalTerminalView] = [:]
+
+    /// Журнал СЕРВЕРНЫХ команд (легаси-имя, синкается; кап 500).
     @Published var cmdHistory: [String: CmdStat] = [:]
+    /// Журналы по скоупам: "mac" — локальный терминал (синкается отдельно).
+    @Published var cmdScopes: [String: [String: CmdStat]] = [:]
+    /// Пользовательский словарь (добавления/скрытия, синкается).
+    @Published var cmdDictUser: [String: DictEntry] = [:]
+    /// Панель: показать журнал другого мира (по клику ⇄).
+    @Published var crossScopeShown = false
     /// Восстановление набираемой строки активной вкладки.
     let cmdTracker = CommandTracker()
     /// Префикс набора для полосы подсказок (зеркало трекера).
@@ -148,9 +173,9 @@ final class AppState: ObservableObject {
     lazy var secrets = SecretStore(store: store)
     private var connectionSubs: [UUID: AnyCancellable] = [:]
 
-    /// Общее состояние окна редактора удалённых файлов.
-    lazy var editor: EditorState = {
-        let e = EditorState()
+    /// Мост к отдельному приложению-редактору QTermEditor.app.
+    lazy var editor: EditorBridge = {
+        let e = EditorBridge()
         e.app = self
         return e
     }()
@@ -179,7 +204,10 @@ final class AppState: ObservableObject {
 
     // MARK: - Вкладки
 
-    func noteActiveTabChanged() { cmdTracker.reset() }
+    func noteActiveTabChanged() {
+        cmdTracker.reset()
+        crossScopeShown = false
+    }
 
     var activeTab: Tab? {
         tabs.first { $0.id == activeTabID }
@@ -241,6 +269,7 @@ final class AppState: ObservableObject {
 
     /// Заголовок вкладки: имя ноды, а при нескольких вкладках — с #N.
     func title(for tab: Tab) -> String {
+        if tab.sessionID == Self.localSessionID { return "Mac" }
         let name = session(for: tab)?.name ?? "?"
         let sameNode = tabs.filter { $0.sessionID == tab.sessionID }
         guard sameNode.count > 1, let idx = sameNode.firstIndex(of: tab) else { return name }
@@ -271,6 +300,14 @@ final class AppState: ObservableObject {
     }
 
     func close(_ tab: Tab) {
+        if tab.sessionID == Self.localSessionID {
+            localTerminals[tab.id]?.process.terminate()
+            localTerminals.removeValue(forKey: tab.id)
+            let wasActive = activeTabID == tab.id
+            tabs.removeAll { $0.id == tab.id }
+            if wasActive { activeTabID = tabs.last?.id }
+            return
+        }
         guard let conn = connections[tab.sessionID] else { return }
         terminals.removeValue(forKey: tab.id)
         if let ch = conn.channels.first(where: { $0.id == tab.id }) {
@@ -343,6 +380,7 @@ final class AppState: ObservableObject {
             guard let self else { return }
             if trackerDirty != dirty { trackerDirty = dirty }
             if cmdPrefix != p {
+                if p.isEmpty { crossScopeShown = false }
                 cmdPrefix = p
                 suggestionSelection = -1
                 suggestionsSuppressed = false
@@ -354,6 +392,8 @@ final class AppState: ObservableObject {
             snippets = vault.snippets ?? []
             sshKeys = vault.sshKeys ?? []
             cmdHistory = vault.cmdHistory ?? [:]
+            cmdScopes = vault.cmdHistoryScopes ?? [:]
+            cmdDictUser = vault.cmdDictUser ?? [:]
             vaultError = nil
         } catch {
             vaultError = "Не удалось открыть хранилище: \(error)"
@@ -361,6 +401,66 @@ final class AppState: ObservableObject {
     }
 
     struct CommandSuggestion { let text: String; let personal: Bool }
+
+    var isLocalTab: Bool { activeTab?.sessionID == Self.localSessionID }
+    /// Скоуп журнала активной вкладки: локальная — "mac", SSH — сервер (легаси).
+    var activeScopeIsMac: Bool { isLocalTab }
+    var otherScopeName: String { activeScopeIsMac ? "серверов" : "мака" }
+
+    private func history(mac: Bool) -> [String: CmdStat] {
+        mac ? (cmdScopes["mac"] ?? [:]) : cmdHistory
+    }
+
+    private func builtinDict(mac: Bool) -> [String] {
+        mac ? CommandDict.mac : CommandDict.common
+    }
+
+    /// Словарь скоупа: встроенный минус скрытые + пользовательские записи.
+    private func effectiveDict(mac: Bool) -> [String] {
+        let scopeName = mac ? "mac" : "server"
+        var set = Set(builtinDict(mac: mac))
+        for (cmd, e) in cmdDictUser {
+            let inScope = (e.scope ?? "both") == "both" || e.scope == scopeName
+            if e.deleted == true {
+                set.remove(cmd)
+            } else if inScope {
+                set.insert(cmd)
+            }
+        }
+        return Array(set)
+    }
+
+    func openLocalTab() {
+        let tab = Tab(id: UUID(), sessionID: Self.localSessionID)
+        tabs.append(tab)
+        activeTabID = tab.id
+    }
+
+    /// Клик по строке «Mac» в сайдбаре: перейти к существующей локальной
+    /// вкладке или открыть первую. Двойной клик не плодит дубли —
+    /// новые вкладки через ⌘L или «Дублировать».
+    func focusOrOpenLocalTab() {
+        if let existing = tabs.last(where: { $0.sessionID == Self.localSessionID }) {
+            activeTabID = existing.id
+        } else {
+            openLocalTab()
+        }
+    }
+
+    /// Терминал вкладки независимо от типа (для панели подсказок).
+    func anyTerminal(for tab: Tab) -> TerminalView? {
+        if tab.sessionID == Self.localSessionID { return localTerminals[tab.id] }
+        return terminals[tab.id]
+    }
+
+    func terminalGrid(for tab: Tab) -> (cols: Int, rows: Int) {
+        if tab.sessionID == Self.localSessionID,
+           let t = localTerminals[tab.id]?.getTerminal() {
+            return (t.cols, t.rows)
+        }
+        if let ch = channel(for: tab) { return (ch.cols, ch.rows) }
+        return (80, 24)
+    }
 
     /// Похоже ли на shell-команду. Отсекает ввод в интерактивные программы:
     /// пункты меню («28»), y/n-ответы, числа, пароли из спецсимволов.
@@ -383,42 +483,55 @@ final class AppState: ObservableObject {
     /// (как на Android) — уедет со следующим обычным синком.
     func recordCommand(_ cmd: String) {
         guard Self.isLikelyCommand(cmd) else { return }
-        var stat = cmdHistory[cmd] ?? CmdStat()
+        let mac = activeScopeIsMac
+        var journal = history(mac: mac)
+        var stat = journal[cmd] ?? CmdStat()
         if stat.deleted == true { stat = CmdStat() } // воскрешение после удаления
         stat.count += 1
         stat.lastUsed = Self.nowISO()
-        cmdHistory[cmd] = stat
-        if cmdHistory.count > 500 {
-            // Кап: выкидываем самые давние.
-            let sorted = cmdHistory.sorted { ($0.value.lastUsed ?? "") > ($1.value.lastUsed ?? "") }
-            cmdHistory = Dictionary(uniqueKeysWithValues: sorted.prefix(500).map { ($0.key, $0.value) })
+        journal[cmd] = stat
+        if journal.count > 500 {
+            let sorted = journal.sorted { ($0.value.lastUsed ?? "") > ($1.value.lastUsed ?? "") }
+            journal = Dictionary(uniqueKeysWithValues: sorted.prefix(500).map { ($0.key, $0.value) })
         }
-        do { try store.save(cmdHistory: cmdHistory) }
-        catch { vaultError = "Не удалось сохранить журнал команд: \(error)" }
+        saveJournal(journal, mac: mac)
     }
 
-    /// Удалить команду из журнала (tombstone — уедет синком на все устройства).
-    func deleteCommand(_ cmd: String) {
-        cmdHistory[cmd] = CmdStat(count: 0, lastUsed: Self.nowISO(), deleted: true)
-        do { try store.save(cmdHistory: cmdHistory) }
-        catch { vaultError = "Не удалось сохранить журнал команд: \(error)" }
+    private func saveJournal(_ journal: [String: CmdStat], mac: Bool) {
+        if mac {
+            cmdScopes["mac"] = journal
+            do { try store.save(cmdHistoryScopes: cmdScopes) }
+            catch { vaultError = "Не удалось сохранить журнал команд: \(error)" }
+        } else {
+            cmdHistory = journal
+            do { try store.save(cmdHistory: cmdHistory) }
+            catch { vaultError = "Не удалось сохранить журнал команд: \(error)" }
+        }
+    }
+
+    /// Удалить команду из журнала скоупа (tombstone — уедет синком).
+    func deleteCommand(_ cmd: String, macScope: Bool? = nil) {
+        let mac = macScope ?? activeScopeIsMac
+        var journal = history(mac: mac)
+        journal[cmd] = CmdStat(count: 0, lastUsed: Self.nowISO(), deleted: true)
+        saveJournal(journal, mac: mac)
         syncEngine.schedulePush()
     }
 
-    /// Очистить весь журнал (tombstone на каждую запись).
-    func clearCommandLog() {
+    /// Очистить журнал скоупа (tombstone на каждую запись).
+    func clearCommandLog(macScope: Bool) {
         let now = Self.nowISO()
-        for key in cmdHistory.keys {
-            cmdHistory[key] = CmdStat(count: 0, lastUsed: now, deleted: true)
+        var journal = history(mac: macScope)
+        for key in journal.keys where journal[key]?.deleted != true {
+            journal[key] = CmdStat(count: 0, lastUsed: now, deleted: true)
         }
-        do { try store.save(cmdHistory: cmdHistory) }
-        catch { vaultError = "Не удалось сохранить журнал команд: \(error)" }
+        saveJournal(journal, mac: macScope)
         syncEngine.schedulePush()
     }
 
-    /// Живые записи журнала (для инструмента правки).
-    var visibleCmdHistory: [(cmd: String, stat: CmdStat)] {
-        cmdHistory
+    /// Живые записи журнала скоупа (для инструмента правки).
+    func visibleCmdHistory(macScope: Bool) -> [(cmd: String, stat: CmdStat)] {
+        history(mac: macScope)
             .filter { $0.value.deleted != true }
             .map { (cmd: $0.key, stat: $0.value) }
             .sorted {
@@ -428,19 +541,69 @@ final class AppState: ObservableObject {
     }
 
     /// Подсказки: свои (частота, свежесть) первыми, затем словарь; до 8.
+    /// Скоуп — по активной вкладке; ⇄ подмешивает журнал другого мира.
     func commandSuggestions(for prefix: String) -> [CommandSuggestion] {
-        let personal = cmdHistory
-            .filter { $0.value.deleted != true && $0.key.hasPrefix(prefix) && $0.key != prefix }
-            .sorted {
-                if $0.value.count != $1.value.count { return $0.value.count > $1.value.count }
-                return ($0.value.lastUsed ?? "") > ($1.value.lastUsed ?? "")
-            }
-            .map { CommandSuggestion(text: $0.key, personal: true) }
-        let dict = CommandDict.common
+        let mac = activeScopeIsMac
+        func personal(from journal: [String: CmdStat]) -> [CommandSuggestion] {
+            journal
+                .filter { $0.value.deleted != true && $0.key.hasPrefix(prefix) && $0.key != prefix }
+                .sorted {
+                    if $0.value.count != $1.value.count { return $0.value.count > $1.value.count }
+                    return ($0.value.lastUsed ?? "") > ($1.value.lastUsed ?? "")
+                }
+                .map { CommandSuggestion(text: $0.key, personal: true) }
+        }
+        var list = personal(from: history(mac: mac))
+        if crossScopeShown {
+            list += personal(from: history(mac: !mac))
+        }
+        let dict = effectiveDict(mac: mac)
             .filter { $0.hasPrefix(prefix) && $0 != prefix }
+            .sorted()
             .map { CommandSuggestion(text: $0, personal: false) }
         var seen = Set<String>()
-        return (personal + dict).filter { seen.insert($0.text).inserted }.prefix(8).map { $0 }
+        return (list + dict).filter { seen.insert($0.text).inserted }.prefix(8).map { $0 }
+    }
+
+    // MARK: Пользовательский словарь
+
+    func addDictEntry(_ cmd: String, scope: String) {
+        cmdDictUser[cmd] = DictEntry(scope: scope, updatedAt: Self.nowISO(), deleted: nil)
+        persistDict()
+    }
+
+    /// Строки словаря скоупа для UI: встроенные (минус скрытые) + свои.
+    func dictionaryRows(macScope: Bool) -> [(cmd: String, custom: Bool)] {
+        let scopeName = macScope ? "mac" : "server"
+        let builtin = macScope ? CommandDict.mac : CommandDict.common
+        var out: [(String, Bool)] = []
+        for cmd in builtin where cmdDictUser[cmd]?.deleted != true {
+            out.append((cmd, false))
+        }
+        for (cmd, e) in cmdDictUser {
+            guard e.deleted != true else { continue }
+            let inScope = (e.scope ?? "both") == "both" || e.scope == scopeName
+            if inScope && !builtin.contains(cmd) { out.append((cmd, true)) }
+        }
+        return out.sorted { $0.0 < $1.0 }.map { (cmd: $0.0, custom: $0.1) }
+    }
+
+    /// Удалить СВОЮ запись словаря (tombstone для синка).
+    func removeDictEntry(_ cmd: String) {
+        cmdDictUser[cmd] = DictEntry(scope: cmdDictUser[cmd]?.scope, updatedAt: Self.nowISO(), deleted: true)
+        persistDict()
+    }
+
+    /// Скрыть команду словаря (работает и для встроенных).
+    func hideDictEntry(_ cmd: String) {
+        cmdDictUser[cmd] = DictEntry(scope: cmdDictUser[cmd]?.scope, updatedAt: Self.nowISO(), deleted: true)
+        persistDict()
+    }
+
+    private func persistDict() {
+        do { try store.save(cmdDictUser: cmdDictUser) }
+        catch { vaultError = "Не удалось сохранить словарь: \(error)" }
+        syncEngine.schedulePush()
     }
 
     /// Панель видна и готова принимать клавиши.
@@ -484,14 +647,23 @@ final class AppState: ObservableObject {
 
     /// Клик по чипу: дослать ОСТАТОК команды в активную вкладку.
     func sendSuggestionRemainder(_ full: String, typedPrefix: String) {
-        guard let tab = activeTab, let ch = channel(for: tab) else { return }
+        guard let tab = activeTab else { return }
         let remainder = String(full.dropFirst(typedPrefix.count))
         let bytes = Array(remainder.utf8)
-        ch.send(bytes[...])
-        cmdTracker.feed(bytes[...])
-        // Клик по панели увёл фокус из терминала — вернуть.
-        if let tv = terminals[tab.id] {
-            tv.window?.makeFirstResponder(tv)
+        if tab.sessionID == Self.localSessionID {
+            // Локальная вкладка: остаток — прямо в PTY процесса.
+            guard let lt = localTerminals[tab.id] else { return }
+            lt.process.send(data: bytes[...])
+            cmdTracker.feed(bytes[...])
+            lt.window?.makeFirstResponder(lt)
+        } else {
+            guard let ch = channel(for: tab) else { return }
+            ch.send(bytes[...])
+            cmdTracker.feed(bytes[...])
+            // Клик по панели увёл фокус из терминала — вернуть.
+            if let tv = terminals[tab.id] {
+                tv.window?.makeFirstResponder(tv)
+            }
         }
     }
 
@@ -651,12 +823,13 @@ final class AppState: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let vault = try store.load()
-            let payload = VaultFile.Payload(
+            var payload = VaultFile.Payload(
                 sessions: vault.sessions,
                 snippets: vault.snippets ?? [],
-                secrets: vault.secrets ?? [:],
+                secrets: (vault.secrets ?? [:]).filter { !$0.key.hasPrefix("sync.") },
                 sshKeys: vault.sshKeys ?? []
             )
+            payload.cmdHistory = vault.cmdHistory
             let data = try VaultFile.encrypt(payload, password: password)
             try data.write(to: url, options: .atomic)
             Dialogs.info("Экспортировано: \(payload.sessions.count) сессий, \(payload.snippets.count) сниппетов, секреты включены.")
@@ -674,20 +847,36 @@ final class AppState: ObservableObject {
         do {
             let payload = try VaultFile.decrypt(data, password: password)
             var vault = try store.load()
-            var addedSessions = 0, skippedSessions = 0
+            var addedSessions = 0, updatedSessions = 0, skippedSessions = 0
 
             var secrets = vault.secrets ?? [:]
             for s in payload.sessions {
-                let exists = vault.sessions.contains {
+                if let i = vault.sessions.firstIndex(where: { $0.id == s.id }) {
+                    // Виндовая семантика: обновление по id, локальный
+                    // hostkey (доверие) приоритетнее импортированного.
+                    var merged = s
+                    if let localHostkey = vault.sessions[i].extra["hostkey"] {
+                        merged.extra["hostkey"] = localHostkey
+                    }
+                    if vault.sessions[i] != merged {
+                        vault.sessions[i] = merged
+                        updatedSessions += 1
+                    } else {
+                        skippedSessions += 1
+                    }
+                } else if vault.sessions.contains(where: {
                     $0.host == s.host && $0.port == s.port && $0.username == s.username
+                }) {
+                    skippedSessions += 1
+                    continue
+                } else {
+                    vault.sessions.append(s)
+                    addedSessions += 1
                 }
-                if exists { skippedSessions += 1; continue }
-                vault.sessions.append(s)
-                addedSessions += 1
-                // Секреты импортированной сессии
+                // Секреты сессии: локальные приоритетнее (putIfAbsent).
                 for kind in ["password", "privateKeyPassphrase"] {
                     let key = "\(s.id.uuidString).\(kind)"
-                    if let v = payload.secrets[key] { secrets[key] = v }
+                    if secrets[key] == nil, let v = payload.secrets[key] { secrets[key] = v }
                 }
             }
 
@@ -709,9 +898,15 @@ final class AppState: ObservableObject {
                 }
             }
 
-            try store.save(sessions: vault.sessions, snippets: snippets, secrets: secrets, sshKeys: keys)
+            // Журнал команд из файла — тем же merge, что и синк.
+            let mergedHistory = SyncMerge.mergeCmdHistory(
+                local: vault.cmdHistory ?? [:],
+                remote: payload.cmdHistory ?? [:]
+            )
+
+            try store.save(sessions: vault.sessions, snippets: snippets, secrets: secrets, sshKeys: keys, cmdHistory: mergedHistory)
             loadVault()
-            Dialogs.info("Импортировано: \(addedSessions) сессий (+\(addedSnippets) сниппетов), пропущено дублей: \(skippedSessions). Секреты новых сессий перенесены.")
+            Dialogs.info("Импортировано: \(addedSessions) новых, обновлено \(updatedSessions), пропущено: \(skippedSessions) (+\(addedSnippets) сниппетов). Секреты и журнал команд слиты, локальные приоритетнее.")
         } catch {
             Dialogs.error(error.localizedDescription)
         }
@@ -764,6 +959,19 @@ final class AppState: ObservableObject {
         return key
     }
 
+    /// Гигиена ноды (перенос с винды): убрать сохранённый пароль.
+    func forgetPassword(for session: Session) {
+        try? secrets.delete(for: session.id, kind: .password)
+    }
+
+    /// Гигиена ноды: сбросить доверие hostkey (TOFU заново при подключении).
+    func resetTrust(for session: Session) {
+        guard let i = sessions.firstIndex(where: { $0.id == session.id }) else { return }
+        sessions[i].extra.removeValue(forKey: "hostkey")
+        sessions[i].updatedAt = Self.nowISO()
+        persist()
+    }
+
     func deleteKey(_ key: SSHKey) {
         if let i = sshKeys.firstIndex(where: { $0.id == key.id }) {
             sshKeys[i].deleted = true
@@ -771,6 +979,22 @@ final class AppState: ObservableObject {
         }
         secrets.deletePassphrase(forKeyID: key.id)
         persistKeys()
+    }
+
+    /// Ручной порядок нод (drag&drop в сайдбаре). Порядок — локальный для
+    /// устройства: merge синка сохраняет свой порядок на каждой стороне,
+    /// updatedAt записей не трогаем (иначе перестановка перебила бы правки).
+    func moveSession(id: UUID, before targetID: UUID) {
+        guard id != targetID else { return }
+        var visible = visibleSessions
+        guard let from = visible.firstIndex(where: { $0.id == id }),
+              let to = visible.firstIndex(where: { $0.id == targetID }) else { return }
+        let moved = visible.remove(at: from)
+        let insertAt = visible.firstIndex(where: { $0.id == targetID }) ?? to
+        visible.insert(moved, at: from < to ? min(insertAt + 1, visible.count) : insertAt)
+        let tombstones = sessions.filter { $0.deleted == true }
+        sessions = visible + tombstones
+        persist()
     }
 
     func sessionsUsing(_ key: SSHKey) -> [Session] {

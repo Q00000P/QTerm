@@ -31,6 +31,16 @@ let package = Package(
                 .product(name: "CodeEditLanguages", package: "CodeEditLanguages")
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        // Отдельное приложение-редактор: своя иконка в доке, свои окна.
+        // SSH не знает — общается с QTerm через EditorIPC.
+        .executableTarget(
+            name: "QTermEditor",
+            dependencies: [
+                .product(name: "CodeEditSourceEditor", package: "CodeEditSourceEditor"),
+                .product(name: "CodeEditLanguages", package: "CodeEditLanguages")
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
 )

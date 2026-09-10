@@ -209,11 +209,33 @@ struct WebDAV {
     }
 
     func put(_ data: Data) async throws {
+        do {
+            try await putOnce(data)
+        } catch DAVError.http(let code) where code == 404 || code == 409 {
+            // Папки на сервере ещё нет — создать и повторить (как на винде).
+            try await mkcol()
+            try await putOnce(data)
+        }
+    }
+
+    private func putOnce(_ data: Data) async throws {
         var r = request("PUT")
         r.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         let (_, resp) = try await URLSession.shared.upload(for: r, from: data)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code) else { throw DAVError.http(code) }
+    }
+
+    /// Создать родительскую папку файла. 405 = уже существует, это ок.
+    private func mkcol() async throws {
+        let parent = url.deletingLastPathComponent()
+        var r = URLRequest(url: parent, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 25)
+        r.httpMethod = "MKCOL"
+        r.setValue("Basic " + Data("\(login):\(password)".utf8).base64EncodedString(),
+                   forHTTPHeaderField: "Authorization")
+        let (_, resp) = try await URLSession.shared.data(for: r)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(code) || code == 405 else { throw DAVError.http(code) }
     }
 }
 
@@ -288,6 +310,19 @@ enum SyncMerge {
         return out
     }
 
+    /// Пользовательский словарь: LWW по updatedAt на запись.
+    static func mergeDict(local: [String: DictEntry], remote: [String: DictEntry]) -> [String: DictEntry] {
+        var out = local
+        for (cmd, r) in remote {
+            if let l = out[cmd] {
+                out[cmd] = (r.updatedAt ?? "") > (l.updatedAt ?? "") ? r : l
+            } else {
+                out[cmd] = r
+            }
+        }
+        return out
+    }
+
     static func merge(local: SessionVault, remote: SessionVault) -> SessionVault {
         var out = local
         out.sessions = mergeList(local: local.sessions, remote: remote.sessions) { $0.updatedAt }
@@ -295,6 +330,13 @@ enum SyncMerge {
         out.snippets = mergeList(local: local.snippets ?? [], remote: remote.snippets ?? []) { $0.updatedAt }
         out.secrets = mergeSecrets(local: local.secrets ?? [:], remote: remote.secrets ?? [:])
         out.cmdHistory = mergeCmdHistory(local: local.cmdHistory ?? [:], remote: remote.cmdHistory ?? [:])
+        var scopes = local.cmdHistoryScopes ?? [:]
+        for (name, remoteScope) in (remote.cmdHistoryScopes ?? [:]) {
+            scopes[name] = mergeCmdHistory(local: scopes[name] ?? [:], remote: remoteScope)
+        }
+        out.cmdHistoryScopes = scopes.isEmpty ? nil : scopes
+        let dict = mergeDict(local: local.cmdDictUser ?? [:], remote: remote.cmdDictUser ?? [:])
+        out.cmdDictUser = dict.isEmpty ? nil : dict
         out.updatedAt = Date()
         return out
     }
@@ -691,7 +733,9 @@ final class SyncEngine: ObservableObject {
                 snippets: merged.snippets,
                 secrets: merged.secrets,
                 sshKeys: merged.sshKeys,
-                cmdHistory: merged.cmdHistory
+                cmdHistory: merged.cmdHistory,
+                cmdHistoryScopes: merged.cmdHistoryScopes,
+                cmdDictUser: merged.cmdDictUser
             )
             app?.loadVault()
 

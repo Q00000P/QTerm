@@ -28,6 +28,11 @@ APP="build/$APP_NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
+# Иконка приложения
+if [ -f "Resources/AppIcon.icns" ]; then
+  cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+fi
+
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -41,6 +46,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
     <key>CFBundleVersion</key><string>$BUILD_NUM</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSFaceIDUsageDescription</key>
@@ -48,6 +54,44 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Старый процесс редактора переживает пересборку и маскирует новые правки —
+# прибиваем, чтобы следующий запуск гарантированно был свежим бинарём.
+killall QTermEditor 2>/dev/null || true
+
+# --- вложенное приложение-редактор (своя иконка в доке)
+EDITOR_NAME="QTermEditor"
+EDITOR_BIN=".build/$BUILD_CONFIG/$EDITOR_NAME"
+if [ -f "$EDITOR_BIN" ]; then
+  EDITOR_APP="$APP/Contents/Library/$EDITOR_NAME.app"
+  mkdir -p "$EDITOR_APP/Contents/MacOS" "$EDITOR_APP/Contents/Resources"
+  cp "$EDITOR_BIN" "$EDITOR_APP/Contents/MacOS/$EDITOR_NAME"
+  # У редактора СВОЯ иконка (визуально отличается в доке от QTerm).
+  if [ -f "Resources/EditorIcon.icns" ]; then
+    cp Resources/EditorIcon.icns "$EDITOR_APP/Contents/Resources/AppIcon.icns"
+  elif [ -f "Resources/AppIcon.icns" ]; then
+    cp Resources/AppIcon.icns "$EDITOR_APP/Contents/Resources/AppIcon.icns"
+  fi
+  cat > "$EDITOR_APP/Contents/Info.plist" <<EPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key><string>$EDITOR_NAME</string>
+    <key>CFBundleIdentifier</key><string>com.q00000p.qterm.editor</string>
+    <key>CFBundleName</key><string>QTerm Editor</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
+    <key>CFBundleVersion</key><string>$BUILD_NUM</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key><string>15.0</string>
+    <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+EPLIST
+  codesign --force --deep -s "$SIGN_IDENTITY" "$EDITOR_APP" >/dev/null 2>&1 || true
+  echo "==> вложен $EDITOR_NAME.app"
+fi
 
 echo "==> codesign"
 if security find-identity -v -p codesigning | grep -q "$SIGN_IDENTITY"; then

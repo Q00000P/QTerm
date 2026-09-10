@@ -108,6 +108,7 @@ enum VaultFile {
         var snippets: [Snippet]
         var secrets: [String: String]
         var sshKeys: [SSHKey]? = nil
+        var cmdHistory: [String: CmdStat]? = nil
     }
 
     static let magic = Data("QTV1".utf8)

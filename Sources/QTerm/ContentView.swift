@@ -49,6 +49,36 @@ struct ContentView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
+            // Локальный терминал мака — прибит НАД списком, не скроллится.
+            Button {
+                state.focusOrOpenLocalTab()
+            } label: {
+                HStack {
+                    Image(systemName: "laptopcomputer")
+                        .foregroundStyle(.cyan)
+                        .frame(width: 14)
+                    VStack(alignment: .leading) {
+                        Text("Mac").fontWeight(.semibold)
+                        Text("локальный терминал · ⌘L")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    let openLocal = state.tabs.filter { $0.sessionID == AppState.localSessionID }.count
+                    if openLocal > 0 {
+                        Text("\(openLocal)")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Capsule().fill(.gray.opacity(0.25)))
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Divider()
+
             List {
                 ForEach(state.visibleSessions) { session in
                     let isActiveNode = state.activeSessionID == session.id
@@ -82,10 +112,14 @@ struct ContentView: View {
                     .help("\(session.username)@\(session.host):\(String(session.port))")
                     .onTapGesture { state.focusNode(session) }
                     .onTapGesture(count: 2) { state.openTab(for: session) }
+                    .onDrag { NSItemProvider(object: session.id.uuidString as NSString) }
+                    .onDrop(of: [.text], delegate: SessionDropDelegate(target: session, state: state))
                     .contextMenu {
                         Button("Открыть в новой вкладке") { state.openTab(for: session) }
                         Divider()
                         Button("Изменить") { editingSession = session }
+                        Button("Забыть пароль") { state.forgetPassword(for: session) }
+                        Button("Сбросить доверие (ключ сервера)") { state.resetTrust(for: session) }
                         Button("Отключить (вкладки остаются)") {
                             state.connections[session.id]?.disconnect()
                         }
@@ -168,9 +202,11 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     terminalArea
                         .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
-                    browserSplitter
-                    browserArea
-                        .frame(width: browserWidth)
+                    if !state.isLocalTab {
+                        browserSplitter
+                        browserArea
+                            .frame(width: browserWidth)
+                    }
                 }
             }
         }
@@ -200,8 +236,12 @@ struct ContentView: View {
     private var terminalArea: some View {
         ZStack(alignment: .topLeading) {
             ForEach(state.tabs) { tab in
-                if let conn = state.connections[tab.sessionID],
-                   let ch = state.channel(for: tab) {
+                if tab.sessionID == AppState.localSessionID {
+                    LocalTerminalHostView(tab: tab, isActive: tab.id == state.activeTabID)
+                        .opacity(tab.id == state.activeTabID ? 1 : 0)
+                        .allowsHitTesting(tab.id == state.activeTabID)
+                } else if let conn = state.connections[tab.sessionID],
+                          let ch = state.channel(for: tab) {
                     TerminalHostView(connection: conn, channel: ch, isActive: tab.id == state.activeTabID)
                         .opacity(tab.id == state.activeTabID ? 1 : 0)
                         .allowsHitTesting(tab.id == state.activeTabID)
@@ -326,7 +366,11 @@ struct ContentView: View {
         .onDrop(of: [.text], delegate: TabDropDelegate(target: tab, state: state))
         .contextMenu {
             Button("Дублировать вкладку") {
-                if let s = state.session(for: tab) { state.openTab(for: s) }
+                if tab.sessionID == AppState.localSessionID {
+                    state.openLocalTab()
+                } else if let s = state.session(for: tab) {
+                    state.openTab(for: s)
+                }
             }
             Button("Закрыть", role: .destructive) { state.close(tab) }
         }
@@ -361,6 +405,17 @@ struct ContentView: View {
                 .help("Переподключить ноду (терминал и вывод сохраняются)")
             }
 
+            // Быстрый подъём окна редактора (в доке своей иконки у него нет).
+            if state.editor.isEditorRunning {
+                Button {
+                    state.editor.focusEditor()
+                } label: {
+                    Image(systemName: "doc.text")
+                }
+                .buttonStyle(.borderless)
+                .help("Окно редактора (⌘⇧E)")
+            }
+
             Picker("", selection: $state.broadcastMode) {
                 ForEach(BroadcastMode.allCases, id: \.self) { mode in
                     Text(mode.title).tag(mode)
@@ -369,6 +424,13 @@ struct ContentView: View {
             .pickerStyle(.menu)
             .fixedSize()
             .help("Куда уходит ввод с клавиатуры")
+
+            if let tab = state.activeTab,
+               let note = state.connections[tab.sessionID]?.authFallbackNote {
+                Text("⚠︎ \(note)")
+                    .font(.caption2).foregroundStyle(.yellow)
+                    .help("Проверь ключ ноды: сервер его отклонил")
+            }
 
             // Диагностика трекера подсказок: что он видит прямо сейчас.
             if state.trackerDirty {
@@ -661,6 +723,26 @@ struct FlowLayout: Layout {
             rowHeight = max(rowHeight, size.height)
         }
     }
+}
+
+/// Перетаскивание нод в сайдбаре: порядок локальный, синк его не трогает.
+struct SessionDropDelegate: DropDelegate {
+    let target: Session
+    let state: AppState
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        provider.loadObject(ofClass: NSString.self) { item, _ in
+            guard let str = item as? String, let dragged = UUID(uuidString: str) else { return }
+            Task { @MainActor in
+                state.moveSession(id: dragged, before: target.id)
+            }
+        }
+        return true
+    }
+
+    func dropEntered(info: DropInfo) {}
+    func validateDrop(info: DropInfo) -> Bool { true }
 }
 
 /// Перетаскивание вкладок: перекладываем в state.tabs, терминалы не трогаем.

@@ -161,6 +161,8 @@ final class SSHConnection: ObservableObject {
     @Published private(set) var sftp: SFTPClient?
     /// Причина недоступности SFTP при живом соединении (nil — всё ок).
     @Published private(set) var sftpError: String?
+    /// Перенос с винды: подключились по паролю после отказа ключа.
+    @Published var authFallbackNote: String?
 
     /// Повторная попытка поднять SFTP на живом соединении
     /// (например, после установки openssh-sftp-server).
@@ -350,6 +352,7 @@ final class SSHConnection: ObservableObject {
     func connect(cols: Int, rows: Int) {
         guard status != .connecting, status != .connected else { return }
         status = .connecting
+        authFallbackNote = nil
         attemptStartedAt = Date()
         attemptNumber += 1
         nextRetryAt = nil
@@ -364,19 +367,38 @@ final class SSHConnection: ObservableObject {
                 let recorder = FirstContactRecorder()
                 let validator: SSHHostKeyValidator = .custom(recorder)
 
-                let client = try await SSHClient.connect(
-                    host: session.host,
-                    port: session.port,
-                    authenticationMethod: auth,
-                    hostKeyValidator: validator,
-                    reconnect: .never,
-                    // Только транспортный шифр: AES128-CTR нужен Keenetic/
-                    // Entware (там нет gcm). RSA как алгоритм ХОСТ-ключа не
-                    // регистрируем: наш патченый префикс rsa-sha2-256 заставлял
-                    // сервер отдавать RSA-хост-ключ, а его сериализация в
-                    // Citadel падает (precondition в ByteBuffer).
-                    algorithms: ctrOnlyAlgorithms
-                )
+                let client: SSHClient
+                do {
+                    client = try await SSHClient.connect(
+                        host: session.host,
+                        port: session.port,
+                        authenticationMethod: auth,
+                        hostKeyValidator: validator,
+                        reconnect: .never,
+                        // Только транспортный шифр: AES128-CTR нужен Keenetic/
+                        // Entware (там нет gcm). RSA как алгоритм ХОСТ-ключа не
+                        // регистрируем: наш патченый префикс rsa-sha2-256 заставлял
+                        // сервер отдавать RSA-хост-ключ, а его сериализация в
+                        // Citadel падает (precondition в ByteBuffer).
+                        algorithms: ctrOnlyAlgorithms
+                    )
+                } catch {
+                    // Фолбэк ключ → пароль (перенос с винды): ключ отклонён,
+                    // но в вейлте есть пароль — пробуем им, с пометкой в UI.
+                    guard session.authMethod != .password,
+                          let password = (try? self.secrets.get(for: session.id, kind: .password)) ?? nil,
+                          !password.isEmpty
+                    else { throw error }
+                    client = try await SSHClient.connect(
+                        host: session.host,
+                        port: session.port,
+                        authenticationMethod: .passwordBased(username: session.username, password: password),
+                        hostKeyValidator: validator,
+                        reconnect: .never,
+                        algorithms: ctrOnlyAlgorithms
+                    )
+                    self.authFallbackNote = "Ключ отклонён — вошли по паролю"
+                }
                 guard gen == self.generation else { try? await client.close(); return }
                 self.client = client
 
