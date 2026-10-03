@@ -144,4 +144,52 @@ public static class XuiDialog
 
     public static bool Confirm(Window owner, string text, string title, string yes = "Да") =>
         Show(owner, text, title, yes, "Отмена") == 0;
+
+    /// <summary>Выбор строки из списка (версии ядра/панели). Можно вписать свою. null — отмена.</summary>
+    public static string? Pick(Window owner, string text, string title, IList<string> items, string? selected = null, string ok = "Выбрать")
+    {
+        string? result = null;
+        var w = new Window
+        {
+            Title = title, Owner = owner, Width = 460, Height = 520, MinHeight = 320,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false,
+        };
+        w.SetResourceReference(Window.BackgroundProperty, "BgBrush");
+        w.SetResourceReference(Window.ForegroundProperty, "FgBrush");
+        var root = new System.Windows.Controls.DockPanel { Margin = new Thickness(16) };
+        var caption = new System.Windows.Controls.TextBox
+        {
+            Text = text, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, BorderThickness = new Thickness(0),
+            Background = System.Windows.Media.Brushes.Transparent, Margin = new Thickness(0, 0, 0, 8),
+        };
+        caption.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "FgBrush");
+        System.Windows.Controls.DockPanel.SetDock(caption, System.Windows.Controls.Dock.Top);
+        root.Children.Add(caption);
+        var input = new System.Windows.Controls.TextBox { Padding = new Thickness(6), Margin = new Thickness(0, 0, 0, 8), Text = selected ?? "" };
+        System.Windows.Controls.DockPanel.SetDock(input, System.Windows.Controls.Dock.Top);
+        root.Children.Add(input);
+        var row = new System.Windows.Controls.StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0),
+        };
+        System.Windows.Controls.DockPanel.SetDock(row, System.Windows.Controls.Dock.Bottom);
+        var okBtn = new System.Windows.Controls.Button { Content = ok, MinWidth = 100, IsDefault = true };
+        var cancel = new System.Windows.Controls.Button { Content = "Отмена", MinWidth = 100, Margin = new Thickness(8, 0, 0, 0), IsCancel = true };
+        okBtn.Click += (_, _) => { if (input.Text.Trim().Length > 0) { result = input.Text.Trim(); w.Close(); } };
+        cancel.Click += (_, _) => w.Close();
+        row.Children.Add(okBtn);
+        row.Children.Add(cancel);
+        root.Children.Add(row);
+        var list = new System.Windows.Controls.ListBox { ItemsSource = items };
+        list.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "PanelBrush");
+        list.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "FgBrush");
+        if (selected is not null && items.Contains(selected)) list.SelectedItem = selected;
+        list.SelectionChanged += (_, _) => { if (list.SelectedItem is string s) input.Text = s; };
+        list.MouseDoubleClick += (_, _) => { if (list.SelectedItem is string s) { result = s; w.Close(); } };
+        root.Children.Add(list);
+        w.Content = root;
+        w.ShowDialog();
+        return result;
+    }
 }

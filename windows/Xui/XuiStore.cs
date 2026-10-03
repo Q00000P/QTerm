@@ -22,6 +22,8 @@ public sealed class XuiPanel
     [JsonPropertyName("pass")] public string? Pass { get; set; }
     /// <summary>AWG: имена клиентов на момент последнего обновления — после переустановки пересоздать их на новой панели.</summary>
     [JsonPropertyName("clients")] public List<string>? Clients { get; set; }
+    /// <summary>SSH-сессия QTerm этого сервера (id) — для установки/отката версии панели в терминале.</summary>
+    [JsonPropertyName("ssh")] public string? Ssh { get; set; }
     [JsonPropertyName("verifyTls")] public bool VerifyTls { get; set; } = true;
     [JsonPropertyName("updatedAt")] public string? UpdatedAt { get; set; }
     [JsonPropertyName("deleted")] public bool? Deleted { get; set; }
@@ -102,6 +104,28 @@ public sealed class XuiStore
         var stub = new XuiPanel { Id = id, Deleted = true, UpdatedAt = QtJson.NowIso() };
         Secrets[key] = JsonSerializer.Serialize(stub, Json);
         _repo.Persist();
+    }
+
+    /// <summary>Ноды QTerm (SSH-сессии) — для привязки панели к серверу.</summary>
+    public List<Session> Sessions() =>
+        _repo.Data.Sessions.Where(x => x.Deleted != true)
+             .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>SSH-сессия сервера панели: явно привязанная → тот же хост → тот же IP.</summary>
+    public Session? SessionFor(XuiPanel p)
+    {
+        var all = Sessions();
+        if (Guid.TryParse(p.Ssh, out var id) && all.FirstOrDefault(x => x.Id == id) is { } s) return s;
+        string host;
+        try { host = PanelUrl.Parse(p.Url).Host; } catch { return null; }
+        var byHost = all.FirstOrDefault(x => string.Equals(x.Host.Trim(), host, StringComparison.OrdinalIgnoreCase));
+        if (byHost is not null) return byHost;
+        try
+        {
+            var ips = System.Net.Dns.GetHostAddresses(host).Select(a => a.ToString()).ToHashSet();
+            return all.FirstOrDefault(x => ips.Contains(x.Host.Trim()));
+        }
+        catch { return null; }
     }
 
     public XuiNamesConfig Names()

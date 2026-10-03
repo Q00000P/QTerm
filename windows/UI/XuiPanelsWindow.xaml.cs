@@ -11,10 +11,14 @@ public partial class XuiPanelsWindow : Window
     private XuiPanel? _cur;   // null = новая
     private bool _loading;
 
+    private sealed record SshItem(string? Id, string Name);
+
     public XuiPanelsWindow(XuiStore store)
     {
         InitializeComponent();
         _store = store;
+        SshBox.ItemsSource = new[] { new SshItem(null, "Авто (по адресу / IP)") }
+            .Concat(store.Sessions().Select(x => new SshItem(x.Id.ToString(), $"{x.Name}  ·  {x.Username}@{x.Host}"))).ToList();
         Reload(null);
         if (List.Items.Count == 0) Blank();
     }
@@ -38,6 +42,7 @@ public partial class XuiPanelsWindow : Window
         UrlBox.Text = "";
         TokenBox.Password = "";
         TlsBox.SelectedIndex = 0;
+        SshBox.SelectedIndex = 0;
         ResultText.Text = "Новая панель";
         NameBox.Focus();
     }
@@ -52,6 +57,8 @@ public partial class XuiPanelsWindow : Window
         UrlBox.Text = p.Url;
         TokenBox.Password = "";
         TlsBox.SelectedIndex = p.VerifyTls ? 0 : 1;
+        SshBox.SelectedItem = SshBox.Items.OfType<SshItem>().FirstOrDefault(i => i.Id is not null &&
+            string.Equals(i.Id, p.Ssh, StringComparison.OrdinalIgnoreCase)) ?? SshBox.Items[0];
         ResultText.Text = p.Token.Length > 0 ? (p.IsAwg ? "Пароль сохранён" : "Токен сохранён") : "Не задано";
     }
 
@@ -122,6 +129,7 @@ public partial class XuiPanelsWindow : Window
             // то, чего нет в форме, — не терять
             Pass = _cur?.Pass,
             Clients = _cur?.Clients,
+            Ssh = (SshBox.SelectedItem as SshItem)?.Id,
         };
     }
 

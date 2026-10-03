@@ -270,14 +270,8 @@ public sealed class XuiOps
 
     // ── бэкапы ──
 
-    public async Task<string> BackupAsync(XuiApi api, string name)
-    {
-        Directory.CreateDirectory(BackupDir);
-        var safe = string.Concat(name.Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' or '.' ? ch : '_'));
-        var path = Path.Combine(BackupDir, $"{safe}-{DateTime.Now:yyyyMMdd-HHmmss}.db");
-        await File.WriteAllBytesAsync(path, await api.GetDbAsync());
-        return path;
-    }
+    /// <summary>База панели → файл «ИМЯ__vВЕРСИЯ__дата.db» (версия — чтобы было к чему откатываться).</summary>
+    public async Task<string> BackupAsync(XuiApi api, string? name = null) => await XuiBackups.SaveAsync(api, name ?? api.Label);
 
     // ── нода: план ──
 
@@ -513,7 +507,7 @@ public sealed class XuiOps
     public async Task<int> ApplyNodeAsync(XuiApi master, NodePlan p)
     {
         Head($"Нода «{p.Name}»");
-        Ok("бэкап главной → " + await BackupAsync(master, "master"));
+        Ok("бэкап главной → " + await BackupAsync(master));
         Ok("бэкап ноды → " + await BackupAsync(p.Node, p.Name));
         int errors = 0;
 

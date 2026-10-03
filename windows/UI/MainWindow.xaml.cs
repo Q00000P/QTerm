@@ -751,7 +751,7 @@ public partial class MainWindow : Window
     {
         if (_xuiWin is null || !_xuiWin.IsLoaded)
         {
-            _xuiWin = new XuiWindow(_repo);
+            _xuiWin = new XuiWindow(_repo) { RunInTerminal = RunInSessionAsync };
             _xuiWin.Closed += (_, _) => _xuiWin = null;
             Closed += (_, _) => _xuiWin?.Close();
             _xuiWin.Show();
@@ -978,6 +978,38 @@ public partial class MainWindow : Window
         if (_activeTab is { } a && _tabs.FirstOrDefault(t => t.Id == a) is { Kind: TabKind.Term })
             _bridge?.Show(a);
         Web.Focus();
+    }
+
+    /// <summary>Команду — в SSH-терминал сессии (для «Нод 3x-ui»: установка/откат версии панели):
+    /// есть подключённая вкладка этой ноды — в неё, нет — открыть; дождаться подключения и шелла.</summary>
+    public async Task<bool> RunInSessionAsync(Guid sessionId, string command)
+    {
+        var s = _repo.Data.Sessions.FirstOrDefault(x => x.Id == sessionId && x.Deleted != true);
+        if (s is null) return false;
+        Guid tab = Guid.Empty;
+        lock (_controllers)
+            foreach (var (id, c) in _controllers)
+                if (c.SessionRef.Id == sessionId && _tabStates.GetValueOrDefault(id) == SessState.Connected) { tab = id; break; }
+        var fresh = tab == Guid.Empty;
+        if (fresh)
+        {
+            OpenSession(s);
+            if (_activeTab is not { } a) return false;
+            tab = a;
+        }
+        else ActivateTab(tab);
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        for (int i = 0; i < 120 && _tabStates.GetValueOrDefault(tab) != SessState.Connected; i++) await Task.Delay(500);
+        if (_tabStates.GetValueOrDefault(tab) != SessState.Connected) return false;
+        // SSH.NET глотает ранний ввод шелла — даём ему подняться
+        if (fresh) await Task.Delay(2000);
+        SshSessionController? ctl;
+        lock (_controllers) _controllers.TryGetValue(tab, out ctl);
+        if (ctl is null) return false;
+        ctl.Write(System.Text.Encoding.UTF8.GetBytes(command + "\n"));
+        FocusTerminal();
+        return true;
     }
 
     /// <summary>Команду — в активный терминал (или во все при «Во все»); нет терминала — в буфер.</summary>
