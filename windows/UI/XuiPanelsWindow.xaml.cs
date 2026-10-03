@@ -189,7 +189,10 @@ public partial class XuiPanelsWindow : Window
             p.Token = r.Token;
             _store.SavePanel(p);
             Reload(p.Id);
-            ResultText.Text = $"✓ токен «{name}» выпущен и сохранён вместе с паролем";
+            // какие токены на панели и когда созданы: свежий install = база создана заново
+            using var api = XuiApi.For(p);
+            var summary = await api.TokenSummaryAsync();
+            ResultText.Text = $"✓ токен «{name}» выпущен и сохранён вместе с паролем\nТокены на панели: {summary}";
         }
         catch (Exception ex) { ResultText.Text = "✗ " + ex.Message; }
     }

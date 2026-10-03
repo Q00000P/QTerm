@@ -226,9 +226,11 @@ extension XuiModel {
         let after = await api.tokenNames() ?? []
         if let before {
             let gone = before.filter { !after.contains($0) }
-            log("  · «\(p.name)»: API-токены до: \(before.isEmpty ? "—" : before.joined(separator: ", ")); после: \(after.joined(separator: ", "))"
+            log("  · «\(p.name)»: API-токены до: \(before.isEmpty ? "—" : before.joined(separator: ", "))"
                 + (gone.isEmpty ? "" : "; пропали: \(gone.joined(separator: ", "))"), .dim)
         }
+        let summary = await api.tokenSummary()
+        log("  · «\(p.name)»: токены сейчас: \(summary)", .dim)
         XuiDialog.secret(
             "Панель «\(p.name)» перестала принимать старый токен — выпущен новый, он уже сохранён в QTerm. Если этот токен нужен где-то ещё (скрипты, другая главная), скопируй. Держи его в переменной окружения, не в коде.",
             title: "Новый API-токен «\(p.name)»", value: api.currentToken)
@@ -242,11 +244,17 @@ extension XuiModel {
         if sel.isEmpty { XuiDialog.info("Выдели панели (или сначала «Проверить версии» — обновлю те, где есть новая версия)"); return }
         // ноды первыми: новая главная шлёт узлам поля, которых старый узел может не понять
         let order = sel.sorted { ($0.isMaster ? 1 : 0, $0.name.lowercased()) < ($1.isMaster ? 1 : 0, $1.name.lowercased()) }
-        guard XuiDialog.confirm(
-            "Обновить по очереди: \(order.map(\.name).joined(separator: " → "))\n\n" +
-            "Каждая: бэкап базы → самообновление панели (update.sh с GitHub) → ждём, пока поднимется с новой версией. " +
-            "На первой ошибке останавливаюсь. Откат — внизу, из бэкапа.\n\nСовет: свежий релиз сначала поставь на одну ноду и проверь.",
-            title: "Обновление панелей", yes: "Обновить") else { return }
+        let steps = "бэкап базы → самообновление панели (update.sh с GitHub) → ждём, пока поднимется с новой версией."
+        let text: String
+        if order.count == 1 {
+            let i = updInfo[order[0].id] ?? UpdInfo()
+            text = "Обновить «\(order[0].name)» (v\(i.version) → v\(i.latest)): \(steps) Откат — внизу, из бэкапа."
+                + (order[0].isMaster ? "\n\nЭто главная: если на нодах версия старее — сначала обнови их." : "")
+        } else {
+            text = "Обновить по очереди (\(order.count)): \(order.map(\.name).joined(separator: " → "))\n\n" +
+                "Каждая: \(steps) На первой ошибке останавливаюсь. Откат — внизу, из бэкапа.\n\nСовет: свежий релиз сначала поставь на одну ноду и проверь."
+        }
+        guard XuiDialog.confirm(text, title: "Обновление панелей", yes: "Обновить") else { return }
         // страховка: без пароля админа пропавший после обновления токен сам не восстановить
         var insured: [XuiPanel] = []
         for p in order { insured.append(await insure(p)) }

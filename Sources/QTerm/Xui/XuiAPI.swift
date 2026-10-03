@@ -127,6 +127,22 @@ final class XuiAPI {
         reissued = true
     }
 
+    /// Токены панели с датой создания: «install · 03.10 14:20 · admin». Свежий install = базу создали заново
+    /// (переустановка), а не потеряли токены при обновлении.
+    func tokenSummary() async -> String {
+        do {
+            guard let arr = try await get("/setting/apiTokens") as? [Any] else { return "не получил список" }
+            let f = DateFormatter(); f.dateFormat = "dd.MM.yyyy HH:mm"
+            return arr.compactMap { $0 as? JObj }.map { o in
+                var at = Double(J.int(o, "createdAt"))
+                if at > 100_000_000_000 { at /= 1000 }
+                let when = at > 0 ? f.string(from: Date(timeIntervalSince1970: at)) : "?"
+                let off = J.isBool(o["enabled"]) && !J.bool(o, "enabled") ? " · выкл" : ""
+                return "\(J.str(o, "name")) · \(when) · \(J.str(o, "scope"))\(off)"
+            }.joined(separator: "; ")
+        } catch { return error.localizedDescription }
+    }
+
     /// Имена API-токенов на панели (nil — не получилось).
     func tokenNames() async -> [String]? {
         guard let arr = try? await get("/setting/apiTokens") as? [Any] else { return nil }

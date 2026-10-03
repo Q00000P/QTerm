@@ -260,9 +260,10 @@ public partial class XuiWindow
         if (before is not null)
         {
             var gone = before.Where(n => !after.Contains(n)).ToList();
-            Log($"  · «{p.Name}»: API-токены до: {(before.Count == 0 ? "—" : string.Join(", ", before))}; после: {string.Join(", ", after)}" +
+            Log($"  · «{p.Name}»: API-токены до: {(before.Count == 0 ? "—" : string.Join(", ", before))}" +
                 (gone.Count == 0 ? "" : "; пропали: " + string.Join(", ", gone)), LogKind.Dim);
         }
+        Log($"  · «{p.Name}»: токены сейчас: {await api.TokenSummaryAsync()}", LogKind.Dim);
         XuiDialog.Secret(this,
             $"Панель «{p.Name}» перестала принимать старый токен — выпущен новый, он уже сохранён в QTerm. " +
             "Если этот токен нужен где-то ещё (скрипты, другая главная), скопируй. Держи его в переменной окружения, не в коде.",
@@ -278,12 +279,14 @@ public partial class XuiWindow
         if (sel.Count == 0) { XuiDialog.Info(this, "Выдели панели (или сначала «Проверить версии» — обновлю те, где есть новая версия)"); return; }
         // ноды первыми: новая главная шлёт узлам поля, которых старый узел может не понять
         var order = sel.OrderBy(p => p.IsMaster ? 1 : 0).ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
-        if (!XuiDialog.Confirm(this,
-                "Обновить по очереди: " + string.Join(" → ", order.Select(p => p.Name)) + "\n\n" +
-                "Каждая: бэкап базы → самообновление панели (update.sh с GitHub) → ждём, пока поднимется с новой версией. " +
-                "На первой ошибке останавливаюсь. Откат — внизу, из бэкапа.\n\n" +
-                "Совет: свежий релиз сначала поставь на одну ноду и проверь.",
-                "Обновление панелей", "Обновить")) return;
+        var steps = "бэкап базы → самообновление панели (update.sh с GitHub) → ждём, пока поднимется с новой версией.";
+        var text = order.Count == 1
+            ? $"Обновить «{order[0].Name}» (v{Info(order[0]).Version} → v{Info(order[0]).Latest}): {steps} Откат — внизу, из бэкапа." +
+              (order[0].IsMaster ? "\n\nЭто главная: если на нодах версия старее — сначала обнови их." : "")
+            : $"Обновить по очереди ({order.Count}): {string.Join(" → ", order.Select(p => p.Name))}\n\n" +
+              $"Каждая: {steps} На первой ошибке останавливаюсь. Откат — внизу, из бэкапа.\n\n" +
+              "Совет: свежий релиз сначала поставь на одну ноду и проверь.";
+        if (!XuiDialog.Confirm(this, text, "Обновление панелей", "Обновить")) return;
         // страховка: без пароля админа пропавший после обновления токен сам не восстановить
         var insured = new List<XuiPanel>();
         foreach (var p in order) insured.Add(await Insure(p));
@@ -381,7 +384,7 @@ public partial class XuiWindow
                     await api.InstallXrayAsync(v);
                     await Task.Delay(3000);
                     var st = await api.StatusAsync();
-                    var x = st["xray"] as JsonObject;
+                    var x = st?["xray"] as JsonObject;
                     i.Xray = x?["version"]?.GetValue<string>() ?? "";
                     var state = x?["state"]?.GetValue<string>() ?? "";
                     SetState(p, $"✓ Xray {i.Xray} ({state})", state is not ("" or "running"));

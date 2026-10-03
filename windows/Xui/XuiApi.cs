@@ -156,6 +156,29 @@ public sealed class XuiApi : IDisposable
         Reissued = true;
     }
 
+    /// <summary>
+    /// Токены панели с датой создания: «install · 03.10 14:20 · admin». Свежий install = базу создали заново
+    /// (переустановка), а не потеряли токены при обновлении.
+    /// </summary>
+    public async Task<string> TokenSummaryAsync()
+    {
+        try
+        {
+            if (await GetAsync("/setting/apiTokens") is not JsonArray arr) return "не получил список";
+            var parts = arr.OfType<JsonObject>().Select(o =>
+            {
+                var name = o["name"]?.ToString() ?? "?";
+                long.TryParse(o["createdAt"]?.ToString(), out var at);
+                if (at > 100_000_000_000) at /= 1000;
+                var when = at > 0 ? DateTimeOffset.FromUnixTimeSeconds(at).LocalDateTime.ToString("dd.MM.yyyy HH:mm") : "?";
+                var on = o["enabled"]?.ToString() == "false" ? " · выкл" : "";
+                return $"{name} · {when} · {o["scope"]}{on}";
+            });
+            return string.Join("; ", parts);
+        }
+        catch (XuiException ex) { return ex.Message; }
+    }
+
     /// <summary>Имена API-токенов на панели (null — не получилось).</summary>
     public async Task<List<string>?> TokenNamesAsync()
     {

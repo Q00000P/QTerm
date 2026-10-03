@@ -835,7 +835,9 @@ struct PanelsSheet: View {
             p.token = t
             store.save(p)
             reload(p.id)
-            result = "✓ токен «\(name)» выпущен и сохранён вместе с паролем"
+            // какие токены на панели и когда созданы: свежий install = база создана заново
+            let summary = (try? await XuiAPI.forPanel(p).tokenSummary()) ?? "—"
+            result = "✓ токен «\(name)» выпущен и сохранён вместе с паролем\nТокены на панели: \(summary)"
         } catch { result = "✗ " + error.localizedDescription }
     }
 
