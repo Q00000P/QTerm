@@ -11,57 +11,105 @@ import SessionVaultKit
 final class CommandTracker: ObservableObject {
 
     @Published private(set) var prefix = ""
-    var onCommand: ((String) -> Void)?
+    /// Enter по строке: (набранный текст, строка «грязная» — правилась
+    /// стрелками/Tab/историей). Решение «писать ли в журнал» принимает хост:
+    /// он сверяет набранное с тем, что реально видно на экране.
+    var onCommand: ((_ typed: String, _ dirty: Bool) -> Void)?
+    /// Первый байт новой строки — хост запоминает позицию курсора (якорь).
+    var onLineStart: (() -> Void)?
     /// Дублируем состояние наружу (AppState): (prefix, dirty).
     var onStateChange: ((String, Bool) -> Void)?
 
     private var raw = Data()      // байты текущей строки (UTF-8)
     private var dirty = false
+    /// Строка открыта: якорь снят, ждём Enter.
+    private var lineOpen = false
+    /// В строку вставили многострочный текст (код, ключ, портянка) —
+    /// такое в журнал не пишется ни построчно, ни целиком.
+    private var tainted = false
+    /// Внутри bracketed paste (ESC[200~ … ESC[201~).
+    private var inPaste = false
+
     /// Парсер ESC-последовательностей: их байты НЕ текст.
     private enum EscState { case none, esc, csi }
     private var escState: EscState = .none
+    private var csiParams: [UInt8] = []
 
     func feed(_ data: ArraySlice<UInt8>) {
-        for byte in data {
+        guard !data.isEmpty else { return }
+        // Клавиатура шлёт по одной клавише за вызов. Кусок из нескольких байт
+        // с переводом строки внутри — это вставка: её строки не команды.
+        let isPasteChunk = data.count > 1 && data.contains(where: { $0 == 0x0d || $0 == 0x0a })
+        if isPasteChunk { tainted = true }
+
+        let lastIndex = data.index(before: data.endIndex)
+        for (i, byte) in zip(data.indices, data) {
+            if !lineOpen {
+                lineOpen = true
+                onLineStart?()
+            }
             switch escState {
             case .esc:
                 // ESC [ … (CSI) и ESC O … (SS3, стрелки в app-режиме)
-                escState = (byte == 0x5b || byte == 0x4f) ? .csi : .none
-                if escState == .none { dirty = true }
+                if byte == 0x5b || byte == 0x4f {
+                    escState = .csi
+                    csiParams.removeAll(keepingCapacity: true)
+                } else {
+                    escState = .none
+                    dirty = true
+                }
                 continue
             case .csi:
                 // Финальный байт 0x40–0x7E завершает последовательность.
                 if (0x40...0x7e).contains(byte) {
                     escState = .none
-                    dirty = true   // стрелки/Home/End — позиция/строка неизвестны
+                    let params = String(decoding: csiParams, as: UTF8.self)
+                    if byte == 0x7e && params == "200" {        // начало вставки
+                        inPaste = true
+                    } else if byte == 0x7e && params == "201" { // конец вставки
+                        inPaste = false
+                    } else {
+                        dirty = true   // стрелки/Home/End — позиция/строка неизвестны
+                    }
+                } else {
+                    csiParams.append(byte)
                 }
                 continue
             case .none:
                 break
             }
             switch byte {
-            case 0x0d, 0x0a: // Enter
-                if !dirty {
-                    let cmd = line().trimmingCharacters(in: .whitespaces)
-                    if cmd.count >= 2 { onCommand?(cmd) }
+            case 0x0d, 0x0a: // Enter (или перевод строки внутри вставки)
+                if inPaste || isPasteChunk {
+                    // Перевод строки из вставки: строка кода, не команда.
+                    tainted = true
+                    raw.removeAll(keepingCapacity: true)
+                    if !inPaste && i == lastIndex {
+                        // Вставка закончилась Enter'ом — шелл выполнил её,
+                        // следующая строка начнётся с чистого листа.
+                        closeLine()
+                    }
+                    continue
                 }
-                raw.removeAll(keepingCapacity: true)
-                dirty = false
-                escState = .none   // Enter гарантированно завершает любую кашу
+                if !tainted {
+                    let cmd = line().trimmingCharacters(in: .whitespaces)
+                    if cmd.count >= 2 { onCommand?(cmd, dirty) }
+                }
+                closeLine()
             case 0x7f, 0x08: // Backspace — убрать последний СИМВОЛ
                 var s = line()
                 if !s.isEmpty { s.removeLast(); raw = Data(s.utf8) }
             case 0x15: // ^U — строка пуста ГАРАНТИРОВАННО: выводит из dirty
                 raw.removeAll(keepingCapacity: true)
                 dirty = false
+                tainted = false
             case 0x17: // ^W — убрать последнее слово
                 var s = line()
                 while let last = s.last, last == " " { s.removeLast() }
                 while let last = s.last, last != " " { s.removeLast() }
                 raw = Data(s.utf8)
-            case 0x03: // ^C — строка сброшена
-                raw.removeAll(keepingCapacity: true)
-                dirty = false
+            case 0x03: // ^C — строка сброшена, будет новый промпт
+                closeLine()
             case 0x09: // Tab — дополняет сервер, мы не видим результат
                 dirty = true
             case 0x01, 0x05, 0x0b: // ^A/^E/^K — курсор/строка неизвестны
@@ -74,16 +122,35 @@ final class CommandTracker: ObservableObject {
                 break
             }
         }
-        prefix = dirty ? "" : line()
-        onStateChange?(prefix, dirty)
+        prefix = (dirty || tainted) ? "" : line()
+        onStateChange?(prefix, dirty || tainted)
+    }
+
+    /// Вставка, отправленная в PTY в обход feed (крупная, чанками).
+    func markPasted(endsWithNewline: Bool) {
+        if endsWithNewline {
+            closeLine()
+        } else {
+            tainted = true
+            lineOpen = true
+        }
+        prefix = ""
+        onStateChange?("", true)
     }
 
     func reset() {
-        raw.removeAll(keepingCapacity: true)
-        dirty = false
-        escState = .none
+        closeLine()
         prefix = ""
         onStateChange?("", false)
+    }
+
+    private func closeLine() {
+        raw.removeAll(keepingCapacity: true)
+        dirty = false
+        tainted = false
+        inPaste = false
+        lineOpen = false
+        escState = .none   // Enter гарантированно завершает любую кашу
     }
 
     private func line() -> String {

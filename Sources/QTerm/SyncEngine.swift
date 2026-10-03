@@ -328,6 +328,10 @@ enum SyncMerge {
         out.sessions = mergeList(local: local.sessions, remote: remote.sessions) { $0.updatedAt }
         out.sshKeys = mergeList(local: local.sshKeys ?? [], remote: remote.sshKeys ?? []) { $0.updatedAt }
         out.snippets = mergeList(local: local.snippets ?? [], remote: remote.snippets ?? []) { $0.updatedAt }
+        // Команды с Git (канон Windows "gitCommands"): без зеркала пуш мака
+        // стирал бы их из облака.
+        let git = mergeList(local: local.gitCommands ?? [], remote: remote.gitCommands ?? []) { $0.updatedAt }
+        out.gitCommands = git.isEmpty ? nil : git
         out.secrets = mergeSecrets(local: local.secrets ?? [:], remote: remote.secrets ?? [:])
         out.cmdHistory = mergeCmdHistory(local: local.cmdHistory ?? [:], remote: remote.cmdHistory ?? [:])
         var scopes = local.cmdHistoryScopes ?? [:]
@@ -514,7 +518,8 @@ enum GDriveOAuth {
             .init(name: "prompt", value: "consent"),
             .init(name: "state", value: state),
         ]
-        await MainActor.run { NSWorkspace.shared.open(auth.url!) }
+        let authURL = auth.url!
+        _ = await MainActor.run { NSWorkspace.shared.open(authURL) }
 
         let params = try await server.waitForRedirect()
         if params["error"] != nil { throw OAuthError.denied }
@@ -735,7 +740,8 @@ final class SyncEngine: ObservableObject {
                 sshKeys: merged.sshKeys,
                 cmdHistory: merged.cmdHistory,
                 cmdHistoryScopes: merged.cmdHistoryScopes,
-                cmdDictUser: merged.cmdDictUser
+                cmdDictUser: merged.cmdDictUser,
+                gitCommands: merged.gitCommands
             )
             app?.loadVault()
 

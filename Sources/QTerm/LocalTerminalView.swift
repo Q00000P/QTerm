@@ -9,6 +9,20 @@ import SwiftTerm
 final class TrackedLocalTerminalView: LocalProcessTerminalView {
     weak var appState: AppState?
 
+    // Мышь как в мобе: выделение → буфер, правая кнопка → вставка.
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        MobaMouse.copySelection(self)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        if MobaMouse.rightClickPaste {
+            paste(self)
+        } else {
+            super.rightMouseDown(with: event)
+        }
+    }
+
     override func send(source: TerminalView, data: ArraySlice<UInt8>) {
         if let state = appState {
             if state.handleSuggestionKey(data) { return } // проглочено панелью
@@ -20,16 +34,24 @@ final class TrackedLocalTerminalView: LocalProcessTerminalView {
     /// Большая вставка (портянки со скриптами) одним куском может резаться
     /// частичной записью в PTY — незакрытый heredoc «висит» и ничего не
     /// исполняется. Шлём чанками с паузой, PTY успевает переваривать.
+    /// Если шелл включил bracketed paste — оборачиваем, как делает сам
+    /// SwiftTerm: многострочная вставка не выполняется построчно, а ждёт Enter.
     override func paste(_ sender: Any) {
         guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        let bytes = Array(text.utf8)
-        if bytes.count <= 4096 {
+        if text.utf8.count <= 4096 {
             super.paste(sender)
             return
         }
-        appState?.cmdTracker.reset() // портянка — не команда для журнала
-        let chunks = stride(from: 0, to: bytes.count, by: 4096).map {
-            Array(bytes[$0..<min($0 + 4096, bytes.count)])
+        let bracketed = getTerminal().bracketedPasteMode
+        // ESC во вставке мог бы «закрыть» bracketed paste изнутри — вычищаем.
+        var body = Array(text.replacingOccurrences(of: "\u{1B}", with: "").utf8)
+        if bracketed {
+            body = Array("\u{1B}[200~".utf8) + body + Array("\u{1B}[201~".utf8)
+        }
+        // Портянка — не команда для журнала.
+        appState?.cmdTracker.markPasted(endsWithNewline: !bracketed && text.hasSuffix("\n"))
+        let chunks = stride(from: 0, to: body.count, by: 4096).map {
+            Array(body[$0..<min($0 + 4096, body.count)])
         }
         Task { @MainActor in
             for chunk in chunks {
@@ -55,8 +77,8 @@ struct LocalTerminalHostView: NSViewRepresentable {
         )
         tv.scrollerStyle = .legacy
         tv.appState = state
-        tv.configureNativeColors()
-        tv.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        // Шрифт и цвета — из настроек (тема/шрифт применяются живьём ко всем).
+        TerminalLook.style(tv, local: true)
 
         // Логин-шелл юзера с его окружением.
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"

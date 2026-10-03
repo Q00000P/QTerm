@@ -13,6 +13,7 @@ struct CommandLogView: View {
     @State private var macScope = false
     @State private var newDictCmd = ""
     @State private var showDict = false
+    @State private var cleanNote: String?
 
     private var rows: [(cmd: String, stat: CmdStat)] {
         let all = state.visibleCmdHistory(macScope: macScope)
@@ -98,8 +99,16 @@ struct CommandLogView: View {
             HStack {
                 Text(showDict ? "\(dictRows.count) в словаре" : "\(rows.count) команд")
                     .font(.caption).foregroundStyle(.secondary)
+                if let cleanNote {
+                    Text(cleanNote).font(.caption).foregroundStyle(.orange)
+                }
                 Spacer()
                 if !showDict {
+                    Button("Почистить мусор") {
+                        let n = state.sanitizeJournals()
+                        cleanNote = n > 0 ? "Убрано: \(n)" : "Мусора нет"
+                    }
+                    .help("Пароли, ключи, куски кода, ответы в меню — удалить на всех устройствах")
                     Button("Очистить журнал", role: .destructive) { confirmClear = true }
                         .disabled(state.visibleCmdHistory(macScope: macScope).isEmpty)
                 }

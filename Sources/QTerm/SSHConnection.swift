@@ -129,7 +129,8 @@ final class TerminalChannel: ObservableObject, Identifiable {
 /// Одно SSH-соединение на ноду: аутентификация, TOFU, SFTP, реконнект.
 /// Терминалы живут во вкладках (TerminalChannel) поверх этого соединения.
 /// Транспортные алгоритмы: добавляем AES128-CTR к штатным GCM из nio-ssh.
-private let ctrOnlyAlgorithms: SSHAlgorithms = {
+// Константа неизменяема после инициализации — Sendable-проверка тут лишняя.
+nonisolated(unsafe) private let ctrOnlyAlgorithms: SSHAlgorithms = {
     var a = SSHAlgorithms()
     a.transportProtectionSchemes = .add([AES128CTR.self])
     return a
@@ -147,7 +148,16 @@ final class SSHConnection: ObservableObject {
         case closed
     }
 
-    @Published var status: Status = .idle
+    @Published var status: Status = .idle {
+        didSet {
+            // Монитор живёт с соединением: поднялось — опрос, упало — стоп
+            // (не дёргать мёртвый клиент; реконнект = свежие дельты).
+            guard status != oldValue else { return }
+            if status == .connected { monitor.start(self) } else { monitor.stop() }
+        }
+    }
+    /// Панель мониторинга ноды (CPU/RAM/сеть/диски, 1 exec в 3 с).
+    let monitor = NodeMonitor()
     /// Вкладки этой ноды. Первая создаётся сразу, чтобы UI было что рисовать.
     @Published private(set) var channels: [TerminalChannel] = []
 
@@ -183,6 +193,9 @@ final class SSHConnection: ObservableObject {
     var onActivity: (() -> Void)?
 
     private var connectTask: Task<Void, Never>?
+    /// Пароль, введённый при подключении без «Сохранить в вейлт» (канон
+    /// Windows): живёт в памяти до выхода — реконнекты его не спрашивают.
+    private var transientPassword: String?
 
     // MARK: - Реконнект / TOFU state
 
@@ -296,7 +309,14 @@ final class SSHConnection: ObservableObject {
                 filePath: path,
                 flags: [.write, .create, .truncate]
             ) { file in
-                try await file.write(ByteBuffer(data: data), at: 0)
+                // Кусками по 32 КБ со смещением: один огромный SSH_FXP_WRITE
+                // упирается в лимит пакета сервера (OpenSSH ~256 КБ).
+                var offset = 0
+                while offset < data.count {
+                    let end = min(offset + 32_768, data.count)
+                    try await file.write(ByteBuffer(data: data.subdata(in: offset..<end)), at: UInt64(offset))
+                    offset = end
+                }
             }
             return
         }
@@ -362,6 +382,22 @@ final class SSHConnection: ObservableObject {
         connectTask = Task {
             do {
                 let session = self.session
+                // Пароль не сохранён — спросить (с галкой «Сохранить в вейлт»).
+                if session.authMethod == .password, self.transientPassword == nil,
+                   ((try? self.secrets.get(for: session.id, kind: .password)) ?? nil)?.isEmpty ?? true {
+                    let node = "\(session.username)@\(session.host)"
+                    let answer = await MainActor.run { Dialogs.askNodePassword(node: node, name: session.name) }
+                    guard gen == self.generation else { return }
+                    guard let answer else {
+                        self.attemptStartedAt = nil
+                        self.status = .failed("Пароль не введён — «Переподключить», чтобы ввести")
+                        return
+                    }
+                    self.transientPassword = answer.password
+                    if answer.save {
+                        try? self.secrets.set(answer.password, for: session.id, kind: .password)
+                    }
+                }
                 let auth = try self.makeAuthMethod()
 
                 let recorder = FirstContactRecorder()
@@ -461,6 +497,9 @@ final class SSHConnection: ObservableObject {
                     self.broadcastToChannels("\u{1B}[31m✗ попытка не удалась: \(short)\u{1B}[0m\r\n")
                 }
                 self.status = .failed(text)
+                if text.contains("allAuthenticationOptionsFailed") {
+                    self.transientPassword = nil // неверный — спросим снова
+                }
                 let authFailure = text.contains("allAuthenticationOptionsFailed")
                     || text.contains("InvalidOpenSSHKey")
                     || text.contains("missingDecryptionKey")
@@ -479,7 +518,8 @@ final class SSHConnection: ObservableObject {
     private func makeAuthMethod() throws -> SSHAuthenticationMethod {
         switch session.authMethod {
         case .password:
-            guard let password = try secrets.get(for: session.id, kind: .password) else {
+            guard let password = (try secrets.get(for: session.id, kind: .password)).flatMap({ $0.isEmpty ? nil : $0 })
+                    ?? transientPassword else {
                 throw ConnectionError.missingSecret("нет пароля в хранилище")
             }
             return .passwordBased(username: session.username, password: password)

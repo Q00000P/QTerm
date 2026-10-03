@@ -26,6 +26,7 @@ public enum EditorIPC {
         case save        // редактор: залить текст на ноду
         case closed      // редактор: вкладка закрыта
         case ready       // редактор: запустился, готов принимать
+        case reload      // редактор: перечитать файл с ноды (придёт open с force)
     }
 
     public struct Message: Codable {
@@ -37,12 +38,18 @@ public enum EditorIPC {
         public var text: String?
         public var ok: Bool?
         public var error: String?
+        /// Сырые байты файла (base64): кодировку решает редактор (UTF-8,
+        /// 1251, KOI8-R, UTF-16…) — текстом в любой кодировке не передать.
+        public var bytes: String?
+        /// open: заменить содержимое даже при несохранённых правках (перечитать).
+        public var force: Bool?
 
         public init(
             kind: Kind, docID: String = "",
             sessionID: String? = nil, nodeName: String? = nil,
             remotePath: String? = nil, text: String? = nil,
-            ok: Bool? = nil, error: String? = nil
+            ok: Bool? = nil, error: String? = nil,
+            bytes: String? = nil, force: Bool? = nil
         ) {
             self.kind = kind
             self.docID = docID
@@ -52,6 +59,8 @@ public enum EditorIPC {
             self.text = text
             self.ok = ok
             self.error = error
+            self.bytes = bytes
+            self.force = force
         }
     }
 

@@ -4,8 +4,6 @@ import SessionVaultKit
 struct ContentView: View {
     @EnvironmentObject var state: AppState
     @State private var editingSession: Session?
-    @State private var showAdd = false
-    @State private var showSnippetEditor = false
     @State private var stripHeight: CGFloat = 30
     /// Ширина проводника — запоминается между запусками.
     @AppStorage("browserWidth") private var browserWidth: Double = 310
@@ -18,7 +16,7 @@ struct ContentView: View {
             workspace
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .sheet(isPresented: $showAdd) {
+        .sheet(isPresented: $state.showAddSession) {
             EditSessionView(session: nil) { state.upsert($0) }
                 .environmentObject(state)
         }
@@ -28,6 +26,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $state.showSyncSettings) {
             SyncSettingsView(engine: state.syncEngine)
+                .environmentObject(state)
+        }
+        .sheet(isPresented: $state.showGitCommands) {
+            GitCommandsView()
                 .environmentObject(state)
         }
         .sheet(isPresented: $state.showCommandLog) {
@@ -40,8 +42,11 @@ struct ContentView: View {
             EditSessionView(session: s) { state.upsert($0) }
                 .environmentObject(state)
         }
-        .sheet(isPresented: $showSnippetEditor) {
+        .sheet(isPresented: $state.showSnippetEditor) {
             SnippetEditorView().environmentObject(state)
+        }
+        .sheet(isPresented: $state.showAbout) {
+            AboutView().environmentObject(state)
         }
     }
 
@@ -79,7 +84,10 @@ struct ContentView: View {
 
             Divider()
 
-            List {
+            // Штатная механика macOS: выделение списка, двойной клик —
+            // primaryAction, перестановка — onMove. Самодельные onTapGesture +
+            // onDrag на строках на SDK macOS 27 глушили любые клики по нодам.
+            List(selection: $state.selectedSessionID) {
                 ForEach(state.visibleSessions) { session in
                     let isActiveNode = state.activeSessionID == session.id
                     HStack {
@@ -104,39 +112,59 @@ struct ContentView: View {
                     .padding(.vertical, 3)
                     .padding(.horizontal, 6)
                     .background(
+                        // Выделение рисует сам список; своя подсветка — только
+                        // у ноды активной вкладки.
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(isActiveNode ? Color.accentColor.opacity(0.25)
-                                  : (state.selectedSessionID == session.id ? Color.gray.opacity(0.18) : Color.clear))
+                            .fill(isActiveNode ? Color.accentColor.opacity(0.25) : Color.clear)
                     )
                     .contentShape(Rectangle())
                     .help("\(session.username)@\(session.host):\(String(session.port))")
-                    .onTapGesture { state.focusNode(session) }
-                    .onTapGesture(count: 2) { state.openTab(for: session) }
-                    .onDrag { NSItemProvider(object: session.id.uuidString as NSString) }
-                    .onDrop(of: [.text], delegate: SessionDropDelegate(target: session, state: state))
-                    .contextMenu {
-                        Button("Открыть в новой вкладке") { state.openTab(for: session) }
-                        Divider()
-                        Button("Изменить") { editingSession = session }
-                        Button("Забыть пароль") { state.forgetPassword(for: session) }
-                        Button("Сбросить доверие (ключ сервера)") { state.resetTrust(for: session) }
-                        Button("Отключить (вкладки остаются)") {
-                            state.connections[session.id]?.disconnect()
-                        }
-                        Button("Закрыть все вкладки ноды") {
-                            state.closeAllTabs(for: session.id)
-                        }
-                        Divider()
-                        Button("Удалить", role: .destructive) { state.delete(session) }
-                    }
+                    .tag(session.id)
                     .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
+                }
+                .onMove { offsets, destination in
+                    state.moveSessions(from: offsets, to: destination)
                 }
             }
             .listStyle(.sidebar)
+            // Меню и двойной клик — на уровне списка (штатно для macOS).
+            .contextMenu(forSelectionType: UUID.self) { ids in
+                if let id = ids.first, let session = state.sessions.first(where: { $0.id == id }) {
+                    Button("Открыть в новой вкладке") { state.openTab(for: session) }
+                    Divider()
+                    Button("Изменить") { editingSession = session }
+                    Button("Забыть пароль") { state.forgetPassword(for: session) }
+                    if session.keyID != nil || session.privateKeyPath != nil {
+                        Button("Отвязать ключи") { state.unlinkKeys(for: session) }
+                    }
+                    Button("Сбросить доверие (ключ сервера)") { state.resetTrust(for: session) }
+                    Button("Отключить (вкладки остаются)") {
+                        state.connections[session.id]?.disconnect()
+                    }
+                    Button("Закрыть все вкладки ноды") {
+                        state.closeAllTabs(for: session.id)
+                    }
+                    Divider()
+                    Button("Удалить", role: .destructive) { state.delete(session) }
+                }
+            } primaryAction: { ids in
+                // Двойной клик / Enter по выделенной ноде — новая вкладка.
+                for id in ids {
+                    if let session = state.sessions.first(where: { $0.id == id }) {
+                        state.openTab(for: session)
+                    }
+                }
+            }
+            // Одиночный клик (смена выделения) — к вкладке ноды, если открыта.
+            .onChange(of: state.selectedSessionID) { _, id in
+                if let id, let session = state.sessions.first(where: { $0.id == id }) {
+                    state.focusNode(session)
+                }
+            }
 
             Divider()
             HStack {
-                Button(action: { showAdd = true }) {
+                Button(action: { state.showAddSession = true }) {
                     Label("Добавить", systemImage: "plus")
                 }
                 .buttonStyle(.borderless)
@@ -202,7 +230,7 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     terminalArea
                         .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
-                    if !state.isLocalTab {
+                    if !state.isLocalTab && state.showFiles {
                         browserSplitter
                         browserArea
                             .frame(width: browserWidth)
@@ -234,6 +262,18 @@ struct ContentView: View {
 
     /// Все терминалы живут одновременно; показывается активная вкладка.
     private var terminalArea: some View {
+        VStack(spacing: 0) {
+            terminalStack
+            // Мониторинг ноды активной SSH-вкладки (у вкладки Mac его нет).
+            if let tab = state.activeTab, tab.sessionID != AppState.localSessionID,
+               let conn = state.connections[tab.sessionID] {
+                NodeMonitorBar(monitor: conn.monitor)
+                    .id(tab.sessionID)
+            }
+        }
+    }
+
+    private var terminalStack: some View {
         ZStack(alignment: .topLeading) {
             ForEach(state.tabs) { tab in
                 if tab.sessionID == AppState.localSessionID {
@@ -454,12 +494,21 @@ struct ContentView: View {
                     }
                 }
                 Divider()
-                Button("Изменить сниппеты…") { showSnippetEditor = true }
+                Button("Изменить сниппеты…") { state.showSnippetEditor = true }
             } label: {
                 Label("Команды", systemImage: "text.badge.star").font(.caption)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+
+            // Команды с Git (канон Windows): поиск → ↩ выполнить.
+            Button {
+                state.showGitCommands = true
+            } label: {
+                Label("Git", systemImage: "chevron.left.forwardslash.chevron.right").font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .help("Команды Git (⌘⇧G)")
 
             Divider().frame(height: 14)
 
@@ -488,8 +537,14 @@ struct ContentView: View {
             .help("Закрыть все вкладки всех нод (соединения рвутся)")
             .disabled(state.tabs.isEmpty)
 
-            if state.broadcastMode == .allNodes {
-                Text("СКВОЗНОЙ ВВОД: печать уходит во все подключённые ноды")
+            switch state.broadcastMode {
+            case .off:
+                EmptyView()
+            case .allNodes:
+                Text("ВО ВСЕ НОДЫ: по Enter строка уходит во все подключённые ноды")
+                    .font(.caption2).bold().foregroundStyle(.red)
+            case .allKeys:
+                Text("СКВОЗНОЙ ВВОД: каждое нажатие уходит во все подключённые ноды")
                     .font(.caption2).bold().foregroundStyle(.red)
             }
             Spacer()
@@ -498,12 +553,9 @@ struct ContentView: View {
     }
 
     private func send(_ snip: Snippet, toAll: Bool) {
-        let bytes = Array((snip.command + "\n").utf8)[...]
-        if toAll {
-            state.sendToAllConnected(bytes)
-        } else if let tab = state.activeTab {
-            state.channel(for: tab)?.send(bytes)
-        }
+        // Mac-вкладка тоже; при «Во все ноды» — во все целиком.
+        state.sendText(snip.command + "\n", toAll: toAll)
+        state.focusActiveTerminal()
     }
 
     // MARK: - Статус активной вкладки

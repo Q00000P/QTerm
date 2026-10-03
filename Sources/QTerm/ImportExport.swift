@@ -109,6 +109,10 @@ enum VaultFile {
         var secrets: [String: String]
         var sshKeys: [SSHKey]? = nil
         var cmdHistory: [String: CmdStat]? = nil
+        // Паритет с Windows (её .qtvault — это SessionVault целиком).
+        var cmdHistoryScopes: [String: [String: CmdStat]]? = nil
+        var cmdDictUser: [String: DictEntry]? = nil
+        var gitCommands: [GitCommand]? = nil
     }
 
     static let magic = Data("QTV1".utf8)
@@ -211,6 +215,28 @@ enum Dialogs {
         return pw
     }
 
+    /// Пароль ноды при подключении + «Сохранить в вейлт» (канон Windows).
+    static func askNodePassword(node: String, name: String) -> (password: String, save: Bool)? {
+        let alert = NSAlert()
+        alert.messageText = "Пароль для \(name)"
+        alert.informativeText = node
+        alert.addButton(withTitle: "Подключить")
+        alert.addButton(withTitle: "Отмена")
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 30, width: 260, height: 24))
+        field.placeholderString = "Пароль"
+        let save = NSButton(checkboxWithTitle: "Сохранить в вейлт (синкается зашифрованным)", target: nil, action: nil)
+        save.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
+        save.state = .off
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 56))
+        container.addSubview(field)
+        container.addSubview(save)
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn, !field.stringValue.isEmpty else { return nil }
+        return (field.stringValue, save.state == .on)
+    }
+
     /// Выпадающий список (имена ключей) → индекс выбранного или nil.
     static func chooseKey(names: [String]) -> Int? {
         let alert = NSAlert()
@@ -230,5 +256,24 @@ enum Dialogs {
 
     static func error(_ text: String) {
         let a = NSAlert(); a.alertStyle = .warning; a.messageText = text; a.runModal()
+    }
+}
+
+
+// Терпимый декод .qtvault: файл с Windows/Android — это SessionVault без
+// formatVersion/exportedAt, и снипетов/секретов может не быть вовсе.
+extension VaultFile.Payload {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        formatVersion = try c.decodeIfPresent(Int.self, forKey: .formatVersion) ?? 1
+        exportedAt = (try? c.decodeIfPresent(Date.self, forKey: .exportedAt)) ?? Date()
+        sessions = try c.decodeIfPresent([Session].self, forKey: .sessions) ?? []
+        snippets = try c.decodeIfPresent([Snippet].self, forKey: .snippets) ?? []
+        secrets = try c.decodeIfPresent([String: String].self, forKey: .secrets) ?? [:]
+        sshKeys = try c.decodeIfPresent([SSHKey].self, forKey: .sshKeys)
+        cmdHistory = try c.decodeIfPresent([String: CmdStat].self, forKey: .cmdHistory)
+        cmdHistoryScopes = try c.decodeIfPresent([String: [String: CmdStat]].self, forKey: .cmdHistoryScopes)
+        cmdDictUser = try c.decodeIfPresent([String: DictEntry].self, forKey: .cmdDictUser)
+        gitCommands = try c.decodeIfPresent([GitCommand].self, forKey: .gitCommands)
     }
 }

@@ -88,7 +88,7 @@ struct EditSessionView: View {
                     SecureField("Passphrase", text: $secret, prompt: Text(passphrasePrompt))
                         .onChange(of: secret) { _, _ in secretTouched = true }
                 } else {
-                    SecureField("Пароль", text: $secret)
+                    SecureField("Пароль", text: $secret, prompt: Text("пусто — спросит при подключении"))
                         .onChange(of: secret) { _, _ in secretTouched = true }
                 }
 

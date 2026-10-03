@@ -33,6 +33,15 @@ struct QTermApp: App {
     @NSApplicationDelegateAdaptor(QTermAppDelegate.self) private var appDelegate
     @StateObject private var state = AppState()
     @Environment(\.openWindow) private var openWindow
+    /// Сочетания клавиш: меню перестраивается при их изменении.
+    @StateObject private var hotkeys = Hotkeys.shared
+
+    init() {
+        // macOS 27 + русская локаль: CoreUI валит приложение при отрисовке
+        // SF Symbols в NSAlert, если в процессе числовая локаль с запятой
+        // (разбор SVG даёт символ 0×0). Числа — только в «C».
+        setlocale(LC_NUMERIC, "C")
+    }
 
     private var titleString: String {
         let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -49,16 +58,30 @@ struct QTermApp: App {
         .windowStyle(.titleBar)
         .defaultSize(width: 1440, height: 860)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("О QTerm") { state.showAbout = true }
+            }
+            CommandGroup(after: .appSettings) {
+                Button("Горячие клавиши…") { state.performHotkey("hotkeys") }
+                    .keyboardShortcut(hotkeys.shortcut("hotkeys"))
+            }
             CommandMenu("Данные") {
                 Button("Импорт из MobaXterm…") { state.importFromMoba() }
                 Button("Экспорт в MobaXterm…") { state.exportToMoba() }
                 Divider()
                 Button("Ключи…") { state.showKeyManager = true }
-                Button("Локальный терминал") { state.openLocalTab() }
-                    .keyboardShortcut("l", modifiers: [.command])
+                Button("Локальный терминал") { state.performHotkey("local") }
+                    .keyboardShortcut(hotkeys.shortcut("local"))
                 Divider()
+                Button("Команды Git…") { state.performHotkey("git") }
+                    .keyboardShortcut(hotkeys.shortcut("git"))
+                Button("Сниппеты…") { state.performHotkey("snippets") }
+                    .keyboardShortcut(hotkeys.shortcut("snippets"))
                 Button("Синхронизация…") { state.showSyncSettings = true }
-                Button("Журнал команд…") { state.showCommandLog = true }
+                Button("Синхронизировать сейчас") { state.performHotkey("sync") }
+                    .keyboardShortcut(hotkeys.shortcut("sync"))
+                Button("Журнал команд…") { state.performHotkey("journal") }
+                    .keyboardShortcut(hotkeys.shortcut("journal"))
                 Button("Импортировать ключ в хранилище…") { state.importKeyFile() }
                 Button("Назначить ключ нодам без ключа…") { state.assignKeyToOrphans() }
                 Button("Задать passphrase ключа…") { state.setKeyPassphrase() }
@@ -67,27 +90,49 @@ struct QTermApp: App {
                 Button("Импорт вейлта из файла…") { state.importVaultFromFile() }
             }
             CommandGroup(after: .newItem) {
-                Button("Редактор") { state.editor.focusEditor() }
-                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                Button("Новая нода…") { state.performHotkey("newnode") }
+                    .keyboardShortcut(hotkeys.shortcut("newnode"))
+                Button("Редактор") { state.performHotkey("qeditor") }
+                    .keyboardShortcut(hotkeys.shortcut("qeditor"))
                 Divider()
-                Button("Новая вкладка") { state.duplicateActiveTab() }
-                    .keyboardShortcut("t", modifiers: .command)
+                Button("Новая вкладка") { state.performHotkey("dup") }
+                    .keyboardShortcut(hotkeys.shortcut("dup"))
                 // Редактор — отдельное приложение, своё ⌘W у него своё.
-                Button("Закрыть вкладку") { state.closeActiveTab() }
-                    .keyboardShortcut("w", modifiers: .command)
+                Button("Закрыть вкладку") { state.performHotkey("close") }
+                    .keyboardShortcut(hotkeys.shortcut("close"))
                 Divider()
-                Button("Следующая вкладка") { state.cycleTab(+1) }
-                    .keyboardShortcut("]", modifiers: [.command, .shift])
-                Button("Предыдущая вкладка") { state.cycleTab(-1) }
-                    .keyboardShortcut("[", modifiers: [.command, .shift])
+                Button("Следующая вкладка") { state.performHotkey("next") }
+                    .keyboardShortcut(hotkeys.shortcut("next"))
+                Button("Предыдущая вкладка") { state.performHotkey("prev") }
+                    .keyboardShortcut(hotkeys.shortcut("prev"))
                 Divider()
                 ForEach(1...9, id: \.self) { n in
-                    Button("Вкладка \(n)") { state.selectTab(index: n - 1) }
-                        .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
+                    Button("Вкладка \(n)") { state.performHotkey("tab\(n)") }
+                        .keyboardShortcut(hotkeys.shortcut("tab\(n)"))
                 }
+            }
+            CommandMenu("Терминал") {
+                Button("Очистить экран") { state.performHotkey("clear") }
+                    .keyboardShortcut(hotkeys.shortcut("clear"))
+                Button("Очистить экран и скроллбек") { state.performHotkey("clearAll") }
+                    .keyboardShortcut(hotkeys.shortcut("clearAll"))
+                Divider()
+                Button(state.broadcastMode == .off ? "Включить «Во все ноды»" : "Выключить «Во все ноды»") {
+                    state.performHotkey("broadcast")
+                }
+                .keyboardShortcut(hotkeys.shortcut("broadcast"))
+                Button("Переподключить ноду") { state.performHotkey("reconnect") }
+                    .keyboardShortcut(hotkeys.shortcut("reconnect"))
+                Button(state.showFiles ? "Скрыть файлы" : "Показать файлы") { state.performHotkey("files") }
+                    .keyboardShortcut(hotkeys.shortcut("files"))
             }
         }
 
+        // Настройки (⌘,) — стандартное маковское окно.
+        Settings {
+            SettingsView()
+                .environmentObject(state)
+        }
     }
 }
 
@@ -95,12 +140,17 @@ struct QTermApp: App {
 /// («во все вкладки одной ноды» смысла не имеет — это один и тот же сервер.)
 enum BroadcastMode: String, CaseIterable {
     case off
+    /// WYSIWYG (канон Windows): печать в активную, по Enter видимая строка
+    /// целиком уходит в остальные ноды; ^C — во все.
     case allNodes
+    /// Каждое нажатие во все ноды (пароли sudo, TUI-программы).
+    case allKeys
 
     var title: String {
         switch self {
         case .off: return "Обычный ввод"
-        case .allNodes: return "Во все ноды"
+        case .allNodes: return "Во все ноды (по Enter)"
+        case .allKeys: return "Во все ноды (посимвольно)"
         }
     }
 }
@@ -125,6 +175,14 @@ final class AppState: ObservableObject {
     /// Ноды с непросмотренным выводом (маячок в сайдбаре и на вкладке).
     @Published var unseenActivity: Set<UUID> = []
     @Published var broadcastMode: BroadcastMode = .off
+    /// Окна/листы, которые открываются и горячими клавишами.
+    @Published var showAddSession = false
+    @Published var showSnippetEditor = false
+    @Published var showAbout = false
+    /// Панель файлов справа (переключается горячей клавишей, запоминается).
+    @Published var showFiles = UserDefaults.standard.object(forKey: "showFiles") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showFiles, forKey: "showFiles") }
+    }
 
     /// Живые экраны терминалов по вкладке (channel.id).
     var terminals: [UUID: TerminalView] = [:]
@@ -143,6 +201,9 @@ final class AppState: ObservableObject {
     /// Экран управления ключами (Данные → Ключи…).
     @Published var showKeyManager = false
     @Published var snippets: [Snippet] = []
+    /// Команды с Git (имя / команда / заметка), синкаются как "gitCommands".
+    @Published var gitCommands: [GitCommand] = []
+    @Published var showGitCommands = false
     /// Псевдо-нода «Локальный терминал» (в вейлт и синк НЕ пишется).
     static let localSessionID = UUID(uuidString: "00000000-0000-0000-0000-00000000700C")!
     /// Живые вьюхи локальных терминалов по вкладке.
@@ -200,6 +261,7 @@ final class AppState: ObservableObject {
 
     init() {
         loadVault()
+        TerminalLook.install(self)
     }
 
     // MARK: - Вкладки
@@ -372,10 +434,71 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Остальные подключённые ноды (кроме ноды активной вкладки) — по одной
+    /// вкладке на ноду, как sendToAllConnected. Для WYSIWYG-броадкаста.
+    func sendToOtherNodes(_ text: String) {
+        guard let active = activeTab else { return }
+        let bytes = Array(text.utf8)[...]
+        var visited: Set<UUID> = [active.sessionID, Self.localSessionID]
+        for tab in tabs where !visited.contains(tab.sessionID) {
+            guard connections[tab.sessionID]?.status == .connected else { continue }
+            channel(for: tab)?.send(bytes)
+            visited.insert(tab.sessionID)
+        }
+    }
+
+    /// Шелл сообщил папку (заголовок «user@host: путь» или OSC 7) —
+    /// панель файлов ноды идёт следом, если включено и вкладка активна.
+    func noteTerminalCwd(tabID: UUID, sessionID: UUID, raw: String, osc7: Bool) {
+        guard activeTabID == tabID else { return }
+        browsers[sessionID]?.followTerminal(raw: raw, osc7: osc7)
+    }
+
+    // MARK: - Горячие клавиши
+
+    func performHotkey(_ id: String) {
+        switch id {
+        case "git": showGitCommands = true
+        case "snippets": showSnippetEditor = true
+        case "journal": showCommandLog = true
+        case "clear": clearActiveTerminal(includeScrollback: false)
+        case "clearAll": clearActiveTerminal(includeScrollback: true)
+        case "broadcast": broadcastMode = broadcastMode == .off ? .allNodes : .off
+        case "reconnect":
+            if let tab = activeTab, tab.sessionID != Self.localSessionID {
+                connections[tab.sessionID]?.reconnect()
+            }
+        case "files": showFiles.toggle()
+        case "dup": duplicateActiveTab()
+        case "close": closeActiveTab()
+        case "next": cycleTab(+1)
+        case "prev": cycleTab(-1)
+        case "local": openLocalTab()
+        case "newnode": showAddSession = true
+        case "sync": Task { await syncEngine.syncNow() }
+        case "qeditor": editor.focusEditor()
+        case "hotkeys":
+            UserDefaults.standard.set("hotkeys", forKey: "settingsTab")
+            _ = NSApplication.shared.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        default:
+            if id.hasPrefix("tab"), let n = Int(id.dropFirst(3)), (1...9).contains(n) {
+                selectTab(index: n - 1)
+                return
+            }
+            return
+        }
+        if ["clear", "clearAll", "broadcast", "reconnect", "files", "dup", "next", "prev"].contains(id) {
+            focusActiveTerminal()
+        }
+    }
+
     // MARK: - Вейлт
 
     func loadVault() {
-        cmdTracker.onCommand = { [weak self] cmd in self?.recordCommand(cmd) }
+        cmdTracker.onLineStart = { [weak self] in self?.anchorInputLine() }
+        cmdTracker.onCommand = { [weak self] typed, dirty in
+            self?.commitCommand(typed: typed, dirty: dirty)
+        }
         cmdTracker.onStateChange = { [weak self] p, dirty in
             guard let self else { return }
             if trackerDirty != dirty { trackerDirty = dirty }
@@ -390,11 +513,13 @@ final class AppState: ObservableObject {
             let vault = try store.initializeIfNeeded()
             sessions = vault.sessions
             snippets = vault.snippets ?? []
+            gitCommands = vault.gitCommands ?? []
             sshKeys = vault.sshKeys ?? []
             cmdHistory = vault.cmdHistory ?? [:]
             cmdScopes = vault.cmdHistoryScopes ?? [:]
             cmdDictUser = vault.cmdDictUser ?? [:]
             vaultError = nil
+            sanitizeJournals()
         } catch {
             vaultError = "Не удалось открыть хранилище: \(error)"
         }
@@ -464,6 +589,266 @@ final class AppState: ObservableObject {
 
     /// Похоже ли на shell-команду. Отсекает ввод в интерактивные программы:
     /// пункты меню («28»), y/n-ответы, числа, пароли из спецсимволов.
+    // MARK: - Что пускать в журнал
+
+    /// Запись отвергается: не похоже на команду, похоже на секрет, или это
+    /// кусок кода/портянки (слишком длинно).
+    static func journalRejects(_ cmd: String) -> Bool {
+        cmd.count > 250 || !isLikelyCommand(cmd) || looksSensitive(cmd)
+    }
+
+    /// Секреты в командной строке: пароли/токены в аргументах, ключи,
+    /// ссылки прокси с учётками, длинные «случайные» строки.
+    static func looksSensitive(_ cmd: String) -> Bool {
+        if cmd.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) { return true }
+        let lower = cmd.lowercased()
+        if lower.contains("private key") || lower.contains("-----begin") { return true }
+        let patterns = [
+            // pass=…, password: …, token=…, api_key=…, secret=…
+            #"(?i)(pass(word|wd|phrase)?|pwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|auth[a-z_-]*|bearer|cookie)\s*[=:]\s*\S"#,
+            #"(?i)\bbearer\s+\S{8,}"#,
+            #"(?i)authorization\s*:"#,
+            // mysql -pСЕКРЕТ, sshpass, echo … | chpasswd
+            #"(?i)\b(mysql|mariadb|mysqladmin|mysqldump|mysqlsh)\b.*\s-p\S"#,
+            #"(?i)\bsshpass\b"#,
+            #"(?i)\|\s*(sudo\s+)?(chpasswd|passwd)\b"#,
+            // --password X, --token=X, openssl -pass pass:X
+            #"(?i)--(password|passwd|pass|token|secret|api-key|apikey|auth-key|private-key)[= ]\S"#,
+            #"(?i)-pass(in|out)?\s+(pass|env|file):"#,
+            // export SOME_TOKEN=…
+            #"(?i)\bexport\s+\w*(key|token|secret|pass|pwd)\w*\s*="#,
+            // схема://user:pass@host и ссылки прокси (в них UUID/ключи — это учётки)
+            #"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s/:@]+:[^\s/@]+@"#,
+            #"(?i)\b(vless|vmess|trojan|ss|ssr|hysteria2?|hy2|tuic|anytls)://"#,
+            // JWT
+            #"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"#,
+        ]
+        for p in patterns where cmd.range(of: p, options: .regularExpression) != nil { return true }
+        // Длинные случайные токены: base64-ключи WG/Reality, пароли, bot-токены.
+        // Hex-хэши (строчные) и пути не трогаем.
+        for word in cmd.split(whereSeparator: { " \t'\"=,;".contains($0) }) where word.count >= 16 {
+            if word.hasPrefix("/") || word.hasPrefix("~") || word.hasPrefix("./") || word.contains(".") { continue }
+            // Читаемые имена режутся дефисами/подчёркиваниями на короткие куски
+            // (QTermAndroid-icons-v2), ключи и токены — сплошные.
+            for part in word.split(whereSeparator: { "-_".contains($0) }) where part.count >= 16 {
+                let upper = part.contains(where: \.isUppercase)
+                let lowerCase = part.contains(where: \.isLowercase)
+                let digit = part.contains(where: \.isNumber)
+                if upper && lowerCase && digit { return true }
+                // Длинный hex (секреты MTProxy, ключи): хэши коммитов в журнале
+                // тоже ни к чему — повторять их не придётся.
+                if part.count >= 32 && part.allSatisfy(\.isHexDigit) { return true }
+            }
+        }
+        return false
+    }
+
+    // MARK: - Сверка команды с экраном
+
+    /// Где на экране начался ввод строки: абсолютная строка буфера,
+    /// колонка и текст промпта перед ней.
+    private struct LineAnchor {
+        let tabID: UUID
+        let row: Int
+        let col: Int
+        let prompt: String
+    }
+    private var lineAnchor: LineAnchor?
+
+    /// Абсолютная (с учётом обрезанного скроллбека) строка курсора. Число строк
+    /// буфера SwiftTerm не публикует — находим последнюю поиском; активный
+    /// экран — последние rows строк.
+    private static func cursorInvariantRow(_ t: Terminal) -> Int {
+        let base = t.buffer.totalLinesTrimmed
+        var lo = base
+        var hi = base + t.rows
+        var step = 256
+        while t.getScrollInvariantLine(row: hi) != nil {
+            lo = hi
+            hi += step
+            step *= 2
+        }
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2
+            if t.getScrollInvariantLine(row: mid) != nil { lo = mid } else { hi = mid }
+        }
+        return lo - (t.rows - 1) + t.buffer.y
+    }
+
+    /// Первый байт новой строки: запоминаем, где стоит курсор (конец промпта).
+    private func anchorInputLine() {
+        guard let tab = activeTab, let tv = anyTerminal(for: tab) else { lineAnchor = nil; return }
+        let t = tv.getTerminal()
+        guard !t.isCurrentBufferAlternate else { lineAnchor = nil; return }
+        let row = Self.cursorInvariantRow(t)
+        let col = t.buffer.x
+        let prompt = t.getScrollInvariantLine(row: row)?
+            .translateToString(trimRight: false, startCol: 0, endCol: col) ?? ""
+        lineAnchor = LineAnchor(tabID: tab.id, row: row, col: col, prompt: prompt)
+    }
+
+    private struct SeenLine {
+        let prompt: String
+        /// От якоря до курсора — то, что эхом вернул шелл.
+        let toCursor: String
+        /// Вся строка ввода (переносы склеены, правый промпт отрезан).
+        let line: String
+        /// Строка ввода из нескольких экранных строк без переноса —
+        /// многострочный буфер (heredoc, продолжение).
+        let multiLine: Bool
+    }
+
+    /// Видимая командная строка активной вкладки (WYSIWYG-броадкаст):
+    /// от якоря начала ввода (переносы склеены, RPROMPT отрезан), а без
+    /// якоря — как на винде: строка курсора с переносами, промпт срезается
+    /// по последнему «# »/«$ »/«% ». Пустая, alt-screen (vim/mc) — nil.
+    func visibleCommandLine() -> String? {
+        guard let tab = activeTab, let tv = anyTerminal(for: tab) else { return nil }
+        let t = tv.getTerminal()
+        guard !t.isCurrentBufferAlternate else { return nil }
+        if let a = lineAnchor, a.tabID == tab.id,
+           let seen = readInputLine(a, t), seen.prompt == a.prompt {
+            return seen.line.isEmpty ? nil : seen.line
+        }
+        var row = Self.cursorInvariantRow(t)
+        while row > t.buffer.totalLinesTrimmed,
+              let l = t.getScrollInvariantLine(row: row), l.isWrapped { row -= 1 }
+        var text = ""
+        while let l = t.getScrollInvariantLine(row: row) {
+            guard let next = t.getScrollInvariantLine(row: row + 1), next.isWrapped else {
+                text += l.translateToString(trimRight: true)
+                break
+            }
+            text += l.translateToString(trimRight: false)
+            row += 1
+        }
+        text = text.replacingOccurrences(of: "\u{0}", with: "")
+        guard let m = text.range(of: #"^[\s\S]*[#$%]\s+"#, options: .regularExpression) else { return nil }
+        let cmd = text[m.upperBound...].trimmingCharacters(in: .whitespaces)
+        return cmd.isEmpty ? nil : cmd
+    }
+
+    private func readInputLine(_ a: LineAnchor, _ t: Terminal) -> SeenLine? {
+        let curRow = Self.cursorInvariantRow(t)
+        let curCol = t.buffer.x
+        guard curRow >= a.row, curRow - a.row <= 50,
+              let first = t.getScrollInvariantLine(row: a.row) else { return nil }
+        let prompt = first.translateToString(trimRight: false, startCol: 0, endCol: a.col)
+        var toCursor = ""
+        var line = ""
+        var multiLine = false
+        var r = a.row
+        while let bl = t.getScrollInvariantLine(row: r) {
+            let start = r == a.row ? a.col : 0
+            if r < curRow {
+                toCursor += bl.translateToString(trimRight: false, startCol: start)
+            } else if r == curRow {
+                toCursor += bl.translateToString(trimRight: false, startCol: start, endCol: max(start, curCol))
+            }
+            guard let next = t.getScrollInvariantLine(row: r + 1),
+                  r + 1 <= curRow || next.isWrapped, r + 1 - a.row <= 50 else {
+                line += bl.translateToString(trimRight: true, startCol: start)
+                break
+            }
+            if !next.isWrapped { multiLine = true }
+            line += bl.translateToString(trimRight: false, startCol: start)
+            r += 1
+        }
+        // Правый промпт (RPROMPT zsh) — короткий хвост после длинной пустоты.
+        if let gap = line.range(of: "    ", options: .backwards) {
+            let tail = line[gap.upperBound...].trimmingCharacters(in: .whitespaces)
+            if tail.count <= 40 { line = String(line[..<gap.lowerBound]) }
+        }
+        line = line.replacingOccurrences(of: "\u{0}", with: "")
+        return SeenLine(prompt: prompt, toCursor: toCursor,
+                        line: line.trimmingCharacters(in: .whitespaces), multiLine: multiLine)
+    }
+
+    /// Промпт шелла, а не запрос программы: пустой (ввод в cat/heredoc без
+    /// PS2), запросы учёток и вопросов, строки продолжения — не шелл.
+    static func isShellPrompt(_ prompt: String) -> Bool {
+        let p = prompt.replacingOccurrences(of: "\u{0}", with: "").trimmingCharacters(in: .whitespaces)
+        guard !p.isEmpty else { return false }
+        let lower = p.lowercased()
+        let credentialWords = ["password", "passphrase", "пароль", "passcode", "token", "secret", "verification", "otp"]
+        if credentialWords.contains(where: { lower.contains($0) }) { return false }
+        if let last = p.last, ":?".contains(last) { return false }
+        let questionMarks = ["[y/n]", "(y/n)", "[yes/no]", "(yes/no", "[д/н]"]
+        if questionMarks.contains(where: { lower.contains($0) }) { return false }
+        // "> ", "quote> ", "heredoc> ", ">>> " — продолжение строки / REPL.
+        if p.range(of: #"^[A-Za-z ]*>+$"#, options: .regularExpression) != nil { return false }
+        return true
+    }
+
+    private static func squeeze(_ s: String) -> String {
+        String(String.UnicodeScalarView(s.unicodeScalars.filter {
+            !CharacterSet.whitespaces.contains($0) && $0.value != 0
+        }))
+    }
+
+    /// Enter: решаем, что писать в журнал — по экрану, а не по нажатиям.
+    /// Пароль не отображается эхом → на экране пусто/звёздочки → мимо.
+    /// Строка, правленая стрелками/историей, берётся с экрана как есть.
+    private func commitCommand(typed: String, dirty: Bool) {
+        let anchor = lineAnchor
+        lineAnchor = nil
+        guard let tab = activeTab, let tv = anyTerminal(for: tab),
+              let a = anchor, a.tabID == tab.id else { return }
+        let t = tv.getTerminal()
+        guard !t.isCurrentBufferAlternate,                 // vim, less, mc, htop
+              let seen = readInputLine(a, t),
+              seen.prompt == a.prompt,                     // экран не уехал/не очищен
+              Self.isShellPrompt(a.prompt) else { return }
+        let cmd: String
+        if dirty {
+            guard !seen.multiLine, !seen.line.isEmpty else { return }
+            cmd = seen.line
+        } else {
+            let shown = Self.squeeze(seen.toCursor)
+            guard !shown.isEmpty, Self.squeeze(typed).hasPrefix(shown) else { return }
+            cmd = typed
+        }
+        recordCommand(cmd.trimmingCharacters(in: .whitespaces))
+    }
+
+    /// Прогон журналов фильтрами. Мусор, попавший раньше (пароли, ключи,
+    /// код, ответы в меню TUI), уходит в tombstone — удаление уедет синком
+    /// на остальные устройства. Tombstone'ы старше 30 дней вычищаются,
+    /// чтобы удалённое не хранилось вечно. Зовётся на каждой загрузке
+    /// вейлта (в т.ч. после синка) — мусор с других устройств не приживётся.
+    @discardableResult
+    func sanitizeJournals() -> Int {
+        let now = Self.nowISO()
+        let cutoff = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-30 * 86_400))
+        var removed = 0
+        func clean(_ j: [String: CmdStat]) -> [String: CmdStat] {
+            var out = j
+            for (cmd, st) in j {
+                if st.deleted == true {
+                    if (st.lastUsed ?? "") < cutoff { out.removeValue(forKey: cmd) }
+                } else if Self.journalRejects(cmd) {
+                    out[cmd] = CmdStat(count: 0, lastUsed: now, deleted: true)
+                    removed += 1
+                }
+            }
+            return out
+        }
+        let server = clean(cmdHistory)
+        var scopes = cmdScopes
+        for (k, v) in scopes { scopes[k] = clean(v) }
+        guard server != cmdHistory || scopes != cmdScopes else { return 0 }
+        cmdHistory = server
+        cmdScopes = scopes
+        do {
+            try store.save(cmdHistory: cmdHistory)
+            try store.save(cmdHistoryScopes: cmdScopes)
+        } catch {
+            vaultError = "Не удалось сохранить журнал команд: \(error)"
+        }
+        if removed > 0 { syncEngine.schedulePush() }
+        return removed
+    }
+
     static func isLikelyCommand(_ cmd: String) -> Bool {
         guard cmd.count >= 2 else { return false }
         guard let first = cmd.split(separator: " ").first else { return false }
@@ -482,7 +867,7 @@ final class AppState: ObservableObject {
     /// Enter в терминале: команда — в журнал. Пуша на каждый Enter нет
     /// (как на Android) — уедет со следующим обычным синком.
     func recordCommand(_ cmd: String) {
-        guard Self.isLikelyCommand(cmd) else { return }
+        guard !Self.journalRejects(cmd) else { return }
         let mac = activeScopeIsMac
         var journal = history(mac: mac)
         var stat = journal[cmd] ?? CmdStat()
@@ -667,6 +1052,72 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Команды с Git
+
+    var visibleGitCommands: [GitCommand] {
+        gitCommands.filter { $0.deleted != true }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    func gitCommand(_ id: UUID) -> GitCommand? {
+        gitCommands.first { $0.id == id && $0.deleted != true }
+    }
+
+    /// Добавить/обновить по id; updatedAt = сейчас → уедет синком.
+    func saveGitCommand(_ g: GitCommand) {
+        var g = g
+        g.updatedAt = Self.nowISO()
+        g.deleted = nil
+        if let i = gitCommands.firstIndex(where: { $0.id == g.id }) {
+            gitCommands[i] = g
+        } else {
+            gitCommands.append(g)
+        }
+        persistGitCommands()
+    }
+
+    /// Удаление — tombstone (уедет на все устройства).
+    func deleteGitCommand(_ id: UUID) {
+        guard let i = gitCommands.firstIndex(where: { $0.id == id }) else { return }
+        gitCommands[i].deleted = true
+        gitCommands[i].updatedAt = Self.nowISO()
+        persistGitCommands()
+    }
+
+    private func persistGitCommands() {
+        do { try store.save(gitCommands: gitCommands) }
+        catch { vaultError = "Не удалось сохранить команды Git: \(error)" }
+        syncEngine.schedulePush()
+    }
+
+    /// Текст в терминал: в активную вкладку (SSH или Mac), а при «Во все
+    /// ноды» — целиком во все (канон Windows SendToActive). false — некуда.
+    @discardableResult
+    func sendText(_ text: String, toAll: Bool = false) -> Bool {
+        let bytes = Array(text.utf8)[...]
+        if toAll || broadcastMode != .off {
+            let any = tabs.contains { connections[$0.sessionID]?.status == .connected }
+            sendToAllConnected(bytes)
+            return any
+        }
+        guard let tab = activeTab else { return false }
+        if tab.sessionID == Self.localSessionID {
+            guard let lt = localTerminals[tab.id] else { return false }
+            lt.process.send(data: bytes)
+            return true
+        }
+        guard connections[tab.sessionID]?.status == .connected,
+              let ch = channel(for: tab) else { return false }
+        ch.send(bytes)
+        return true
+    }
+
+    /// Вернуть фокус терминалу активной вкладки (после шитов/окон).
+    func focusActiveTerminal() {
+        guard let tab = activeTab, let tv = anyTerminal(for: tab) else { return }
+        DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
+    }
+
     func addSnippet(title: String, command: String) {
         snippets.append(Snippet(title: title, command: command, updatedAt: Self.nowISO()))
         persistSnippets()
@@ -830,6 +1281,9 @@ final class AppState: ObservableObject {
                 sshKeys: vault.sshKeys ?? []
             )
             payload.cmdHistory = vault.cmdHistory
+            payload.cmdHistoryScopes = vault.cmdHistoryScopes
+            payload.cmdDictUser = vault.cmdDictUser
+            payload.gitCommands = vault.gitCommands
             let data = try VaultFile.encrypt(payload, password: password)
             try data.write(to: url, options: .atomic)
             Dialogs.info("Экспортировано: \(payload.sessions.count) сессий, \(payload.snippets.count) сниппетов, секреты включены.")
@@ -903,8 +1357,21 @@ final class AppState: ObservableObject {
                 local: vault.cmdHistory ?? [:],
                 remote: payload.cmdHistory ?? [:]
             )
+            var scopes = vault.cmdHistoryScopes ?? [:]
+            for (name, imported) in payload.cmdHistoryScopes ?? [:] {
+                scopes[name] = SyncMerge.mergeCmdHistory(local: scopes[name] ?? [:], remote: imported)
+            }
+            let dict = SyncMerge.mergeDict(local: vault.cmdDictUser ?? [:], remote: payload.cmdDictUser ?? [:])
 
-            try store.save(sessions: vault.sessions, snippets: snippets, secrets: secrets, sshKeys: keys, cmdHistory: mergedHistory)
+            // Команды Git: обновление по id (как на Windows).
+            var git = vault.gitCommands ?? []
+            for g in payload.gitCommands ?? [] {
+                if let i = git.firstIndex(where: { $0.id == g.id }) { git[i] = g } else { git.append(g) }
+            }
+
+            try store.save(sessions: vault.sessions, snippets: snippets, secrets: secrets, sshKeys: keys,
+                           cmdHistory: mergedHistory, cmdHistoryScopes: scopes, cmdDictUser: dict,
+                           gitCommands: git)
             loadVault()
             Dialogs.info("Импортировано: \(addedSessions) новых, обновлено \(updatedSessions), пропущено: \(skippedSessions) (+\(addedSnippets) сниппетов). Секреты и журнал команд слиты, локальные приоритетнее.")
         } catch {
@@ -960,6 +1427,15 @@ final class AppState: ObservableObject {
     }
 
     /// Гигиена ноды (перенос с винды): убрать сохранённый пароль.
+    /// Отвязать ключи от ноды (канон Windows): ключ из хранилища и путь к файлу.
+    func unlinkKeys(for session: Session) {
+        guard let i = sessions.firstIndex(where: { $0.id == session.id }) else { return }
+        sessions[i].keyID = nil
+        sessions[i].privateKeyPath = nil
+        sessions[i].updatedAt = Self.nowISO()
+        persist()
+    }
+
     func forgetPassword(for session: Session) {
         try? secrets.delete(for: session.id, kind: .password)
     }
@@ -984,6 +1460,14 @@ final class AppState: ObservableObject {
     /// Ручной порядок нод (drag&drop в сайдбаре). Порядок — локальный для
     /// устройства: merge синка сохраняет свой порядок на каждой стороне,
     /// updatedAt записей не трогаем (иначе перестановка перебила бы правки).
+    func moveSessions(from offsets: IndexSet, to destination: Int) {
+        var visible = visibleSessions
+        visible.move(fromOffsets: offsets, toOffset: destination)
+        let tombstones = sessions.filter { $0.deleted == true }
+        sessions = visible + tombstones
+        persist()
+    }
+
     func moveSession(id: UUID, before targetID: UUID) {
         guard id != targetID else { return }
         var visible = visibleSessions
@@ -1078,7 +1562,8 @@ final class AppState: ObservableObject {
     /// includeScrollback = false — только видимый экран (как clear),
     /// true — экран и весь скроллбек.
     func clearActiveTerminal(includeScrollback: Bool) {
-        guard let tab = activeTab, let tv = terminals[tab.id] else { return }
+        // Локальная вкладка живёт в своём реестре — раньше очистка её не видела.
+        guard let tab = activeTab, let tv = anyTerminal(for: tab) else { return }
         // Очистка шлёт \n в канал мимо трекера — сбрасываем его буфер,
         // иначе дальнейший ввод клеится к недонабранному хвосту.
         cmdTracker.reset()
@@ -1091,7 +1576,9 @@ final class AppState: ObservableObject {
         }
         tv.needsDisplay = true
         // Промпт перерисовать сразу — иначе остаётся чёрный экран до Enter.
-        if connections[tab.sessionID]?.status == .connected {
+        if tab.sessionID == Self.localSessionID {
+            localTerminals[tab.id]?.process.send(data: Array("\n".utf8)[...])
+        } else if connections[tab.sessionID]?.status == .connected {
             channel(for: tab)?.send(Array("\n".utf8)[...])
         }
     }

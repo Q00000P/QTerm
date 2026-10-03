@@ -18,11 +18,11 @@ final class EditorBridge: ObservableObject {
     static let maxEditableSize: UInt64 = 2 * 1024 * 1024
 
     enum OpenError: LocalizedError {
-        case notUTF8
+        case binary
         case editorMissing
         var errorDescription: String? {
             switch self {
-            case .notUTF8: return "Файл не в UTF-8 (или бинарный) — открой через скачивание"
+            case .binary: return "Похоже на бинарный файл — открой через скачивание или внешний редактор"
             case .editorMissing: return "QTermEditor.app не найден внутри QTerm.app — пересобери приложение"
             }
         }
@@ -77,7 +77,11 @@ final class EditorBridge: ObservableObject {
 
     /// Отправить файл в редактор (запустив его при необходимости).
     func open(remotePath: String, data: Data, sessionID: UUID, nodeName: String) throws {
-        guard let text = String(data: data, encoding: .utf8) else { throw OpenError.notUTF8 }
+        // Кодировку (UTF-8/1251/KOI8-R/UTF-16…) определяет редактор по байтам;
+        // здесь отсекаем только бинарники: NUL в начале без UTF-16 BOM.
+        let head = data.prefix(8192)
+        let utf16BOM = head.starts(with: [0xFF, 0xFE]) || head.starts(with: [0xFE, 0xFF])
+        if !utf16BOM, head.contains(0) { throw OpenError.binary }
         guard editorAppURL != nil else { throw OpenError.editorMissing }
 
         // Один и тот же файл на той же ноде — тот же docID (редактор обновит).
@@ -90,7 +94,7 @@ final class EditorBridge: ObservableObject {
         EditorIPC.send(.init(
             kind: .open, docID: docID,
             sessionID: sessionID.uuidString, nodeName: nodeName,
-            remotePath: remotePath, text: text
+            remotePath: remotePath, bytes: data.base64EncodedString()
         ), to: EditorIPC.toEditor)
         focusEditor()
     }
@@ -101,6 +105,8 @@ final class EditorBridge: ObservableObject {
         switch m.kind {
         case .save:
             upload(m)
+        case .reload:
+            reload(m)
         case .closed:
             routes.removeValue(forKey: m.docID)
         case .ready:
@@ -112,7 +118,9 @@ final class EditorBridge: ObservableObject {
 
     private func upload(_ m: EditorIPC.Message) {
         guard let route = routes[m.docID] ?? routeFrom(m) else { return }
-        let text = m.text ?? ""
+        // Байты в кодировке документа (редактор кодирует сам); старый
+        // формат — текст, пишем UTF-8.
+        let data = m.bytes.flatMap { Data(base64Encoded: $0) } ?? Data((m.text ?? "").utf8)
         guard let conn = app?.connections[route.sessionID], conn.status == .connected else {
             EditorIPC.send(.init(
                 kind: .saved, docID: m.docID, ok: false,
@@ -122,14 +130,41 @@ final class EditorBridge: ObservableObject {
         }
         Task {
             do {
-                try await conn.writeFile(path: route.path, data: Data(text.utf8))
+                try await conn.writeFile(path: route.path, data: data)
                 EditorIPC.send(.init(
-                    kind: .saved, docID: m.docID, text: text, ok: true
+                    kind: .saved, docID: m.docID, ok: true
                 ), to: EditorIPC.toEditor)
             } catch {
                 EditorIPC.send(.init(
                     kind: .saved, docID: m.docID, ok: false,
                     error: "Ошибка сохранения: \(error.localizedDescription)"
+                ), to: EditorIPC.toEditor)
+            }
+        }
+    }
+
+    /// «Перечитать»: свежие байты с ноды → open с force.
+    private func reload(_ m: EditorIPC.Message) {
+        guard let route = routes[m.docID] ?? routeFrom(m) else { return }
+        guard let conn = app?.connections[route.sessionID], conn.status == .connected else {
+            EditorIPC.send(.init(
+                kind: .saved, docID: m.docID, ok: false,
+                error: "Нода «\(route.node)» не подключена — перечитать нельзя"
+            ), to: EditorIPC.toEditor)
+            return
+        }
+        Task {
+            do {
+                let data = try await conn.readFile(path: route.path)
+                EditorIPC.send(.init(
+                    kind: .open, docID: m.docID,
+                    sessionID: route.sessionID.uuidString, nodeName: route.node,
+                    remotePath: route.path, bytes: data.base64EncodedString(), force: true
+                ), to: EditorIPC.toEditor)
+            } catch {
+                EditorIPC.send(.init(
+                    kind: .saved, docID: m.docID, ok: false,
+                    error: "Перечитать: \(error.localizedDescription)"
                 ), to: EditorIPC.toEditor)
             }
         }

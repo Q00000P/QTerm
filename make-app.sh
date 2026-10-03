@@ -8,7 +8,7 @@ APP_NAME="QTerm"
 BUNDLE_ID="com.q00000p.qterm"
 SIGN_IDENTITY="${QTERM_SIGN_IDENTITY:-QTerm Self-Signed}"
 BUILD_CONFIG="release"
-APP_VERSION="0.1.0"
+APP_VERSION="3.7.0"
 
 cd "$(dirname "$0")"
 mkdir -p build
@@ -21,7 +21,9 @@ echo "$BUILD_NUM" > "$BUILDNUM_FILE"
 echo "==> swift build ($BUILD_CONFIG) — билд #$BUILD_NUM"
 swift build -c "$BUILD_CONFIG"
 
-BIN=".build/$BUILD_CONFIG/$APP_NAME"
+# Каталог продуктов сборки (у Xcode 27 / Swift Build он другой — спрашиваем).
+BIN_DIR="$(swift build -c "$BUILD_CONFIG" --show-bin-path)"
+BIN="$BIN_DIR/$APP_NAME"
 [ -f "$BIN" ] || { echo "Бинарь не найден: $BIN"; exit 1; }
 
 APP="build/$APP_NAME.app"
@@ -34,6 +36,26 @@ if [ -f "Resources/AppIcon.icns" ]; then
 fi
 
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
+
+# Ресурсы пакетов (*.bundle: tree-sitter-запросы CodeEditLanguages, шейдеры
+# SwiftTerm…). Сборка Swift Build (Xcode 27) ищет их ТОЛЬКО в
+# Contents/Resources приложения — без копии редактор падал на первом файле.
+# Где лежат бандлы: обычно рядом с бинарём; на всякий случай ищем и в .build.
+BUNDLES=()
+for b in "$BIN_DIR"/*.bundle; do [ -d "$b" ] && BUNDLES+=("$b"); done
+if [ ${#BUNDLES[@]} -eq 0 ]; then
+  while IFS= read -r b; do BUNDLES+=("$b"); done < <(find .build -maxdepth 6 -type d -name "*_*.bundle" -path "*elease*" 2>/dev/null)
+fi
+echo "==> ресурсы пакетов: ${#BUNDLES[@]} шт. ($(for b in ${BUNDLES[@]+"${BUNDLES[@]}"}; do basename "$b"; done | tr '\n' ' '))"
+copy_bundles() {
+  local dest="$1"
+  mkdir -p "$dest"
+  for b in ${BUNDLES[@]+"${BUNDLES[@]}"}; do
+    rm -rf "$dest/$(basename "$b")"
+    cp -R "$b" "$dest/"
+  done
+}
+copy_bundles "$APP/Contents/Resources"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -51,6 +73,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key><true/>
     <key>NSFaceIDUsageDescription</key>
     <string>Touch ID разблокирует хранилище сессий</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>QTerm подключается по SSH к серверам и роутерам в локальной сети</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 </dict>
 </plist>
 PLIST
@@ -61,11 +86,12 @@ killall QTermEditor 2>/dev/null || true
 
 # --- вложенное приложение-редактор (своя иконка в доке)
 EDITOR_NAME="QTermEditor"
-EDITOR_BIN=".build/$BUILD_CONFIG/$EDITOR_NAME"
+EDITOR_BIN="$BIN_DIR/$EDITOR_NAME"
 if [ -f "$EDITOR_BIN" ]; then
   EDITOR_APP="$APP/Contents/Library/$EDITOR_NAME.app"
   mkdir -p "$EDITOR_APP/Contents/MacOS" "$EDITOR_APP/Contents/Resources"
   cp "$EDITOR_BIN" "$EDITOR_APP/Contents/MacOS/$EDITOR_NAME"
+  copy_bundles "$EDITOR_APP/Contents/Resources"
   # У редактора СВОЯ иконка (визуально отличается в доке от QTerm).
   if [ -f "Resources/EditorIcon.icns" ]; then
     cp Resources/EditorIcon.icns "$EDITOR_APP/Contents/Resources/AppIcon.icns"

@@ -29,11 +29,11 @@ struct TerminalHostView: NSViewRepresentable {
         // Скроллбек: у SwiftTerm по умолчанию всего 500 строк — длинные
         // прогоны обрезались. Постоянный ползунок (.legacy) — для быстрой
         // прокрутки мышью.
-        let tv = TerminalView(frame: .zero, font: nil, options: TerminalOptions(scrollback: QTermTerminal.scrollbackLines))
+        let tv = QTermTerminalView(frame: .zero, font: nil, options: TerminalOptions(scrollback: QTermTerminal.scrollbackLines))
         tv.scrollerStyle = .legacy
         tv.terminalDelegate = context.coordinator
         context.coordinator.terminalView = tv
-        tv.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        TerminalLook.style(tv, local: false)
 
         channel.onOutput = { [weak tv] bytes in
             tv?.feed(byteArray: bytes)
@@ -84,11 +84,25 @@ struct TerminalHostView: NSViewRepresentable {
                     return
                 }
                 if state.handleSuggestionKey(data) { return }
+                // WYSIWYG-броадкаст (канон Windows): видимую строку читаем ДО
+                // трекера — он на Enter сбрасывает якорь строки.
+                let isEnter = data.count == 1 && data.first == 0x0d
+                let wysiwyg = state.broadcastMode == .allNodes && isEnter
+                    ? state.visibleCommandLine() : nil
                 state.cmdTracker.feed(data)
                 switch state.broadcastMode {
                 case .off:
                     channel.send(data)
                 case .allNodes:
+                    // Ввод адресный: стрелки/история/Tab живут в активной;
+                    // по Enter её строка целиком уходит в остальные ноды.
+                    channel.send(data)
+                    if let cmd = wysiwyg {
+                        state.sendToOtherNodes(cmd + "\r")
+                    } else if data.count == 1, data.first == 0x03 {
+                        state.sendToOtherNodes("\u{03}") // ^C прерывает везде
+                    }
+                case .allKeys:
                     state.sendToAllConnected(data)
                 }
             }
@@ -99,10 +113,21 @@ struct TerminalHostView: NSViewRepresentable {
         }
 
         func setTerminalTitle(source: TerminalView, title: String) {
-            MainActor.assumeIsolated { channel.title = title }
+            MainActor.assumeIsolated {
+                channel.title = title
+                // «user@host: путь» — панель файлов может идти следом за cd.
+                state.noteTerminalCwd(tabID: channel.id, sessionID: connection.session.id,
+                                      raw: title, osc7: false)
+            }
         }
 
-        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+            MainActor.assumeIsolated {
+                guard let directory else { return }
+                state.noteTerminalCwd(tabID: channel.id, sessionID: connection.session.id,
+                                      raw: directory, osc7: true)
+            }
+        }
 
         func scrolled(source: TerminalView, position: Double) {}
         func clipboardCopy(source: TerminalView, content: Data) {
