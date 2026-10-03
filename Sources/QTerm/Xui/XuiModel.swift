@@ -112,7 +112,7 @@ struct ConnectResult {
 @MainActor
 final class XuiModel: ObservableObject {
     enum Seg: String, CaseIterable, Identifiable {
-        case monitor = "Монитор", clients = "Клиенты", nodes = "Узлы", names = "Ревизия имён", awg = "AWG"
+        case monitor = "Монитор", clients = "Клиенты", nodes = "Узлы", names = "Ревизия имён", awg = "AWG", updates = "Обновления"
         var id: String { rawValue }
     }
 
@@ -121,7 +121,12 @@ final class XuiModel: ObservableObject {
 
     @Published var masters: [XuiPanel] = []
     @Published var masterId: String = "" { didSet { if oldValue != masterId { masterChanged() } } }
-    @Published var seg: Seg = .monitor { didSet { if seg == .awg && oldValue != .awg { Task { await refreshAwg() } } } }
+    @Published var seg: Seg = .monitor {
+        didSet {
+            if seg == .awg && oldValue != .awg { Task { await refreshAwg() } }
+            if seg == .updates && oldValue != .updates { Task { await refreshUpdates() } }
+        }
+    }
     @Published var status = ""
     @Published var logLines: [LogLine] = []
     @Published var busy = false
@@ -155,7 +160,17 @@ final class XuiModel: ObservableObject {
     @Published var awgStatus = ""
     private var awgLoading = false
 
+    // обновления
+    @Published var updInfo: [String: UpdInfo] = [:]
+    @Published var updSel = Set<String>()
+    @Published var bakSel: String?
+    @Published var updStatus = ""
+    var updBusy = false
+    /// Команда в SSH-терминал ноды QTerm (ставит окно — из AppState).
+    var runInTerminal: ((UUID, String) async -> Bool)?
+
     // листы
+    @Published var pickRequest: PickRequest?
     @Published var planRequest: PlanRequest?
     @Published var connectRequest: ConnectRequest?
     @Published var showPanels = false
@@ -248,7 +263,7 @@ final class XuiModel: ObservableObject {
     func tick() async {
         guard !busy else { return }
         if seg == .awg { await refreshAwg(quiet: true) }
-        else if seg != .names { await refresh(quiet: true) }
+        else if seg != .names && seg != .updates { await refresh(quiet: true) }
     }
 
     /// Обёртка операций: одна за раз, ошибки — в лог, после — обновление.
@@ -734,7 +749,7 @@ final class XuiModel: ObservableObject {
                 items: items, resultHeader: "Клиент (станет)", fromHeader: "Записи / куда добавить"))
             if !go { self.log("  остановлено", .warn); return }
 
-            let bp = try await ops.backup(m, "master")
+            let bp = try await ops.backup(m)
             self.log("  ✓ бэкап главной → " + bp, .ok)
             let approved = Set(items.filter { $0.kind == "merge" && $0.apply }.map(\.key))
             if !approved.isEmpty {
@@ -803,7 +818,7 @@ final class XuiModel: ObservableObject {
 
             let approved = Set(items.filter { $0.owner == nil && $0.apply }.map(\.key))
             if !approved.isEmpty {
-                let bp = try await ops.backup(m, "master")
+                let bp = try await ops.backup(m)
                 self.log("  ✓ бэкап главной → " + bp, .ok)
                 let fresh = ops.planMerge(try await m.clients(), try await m.inbounds(), try await m.nodes())
                     .filter { approved.contains($0.key) }

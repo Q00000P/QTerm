@@ -180,12 +180,14 @@ struct XuiPanel: Codable, Identifiable, Hashable {
     var pass: String?
     /// AWG: имена клиентов на момент последнего обновления (для пересоздания после переустановки).
     var clients: [String]?
+    /// SSH-сессия QTerm этого сервера (id) — для установки/отката версии панели в терминале.
+    var ssh: String?
     var verifyTls = true
     var updatedAt: String?
     var deleted: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, role, url, token, login, pass, clients, verifyTls, updatedAt, deleted
+        case id, name, role, url, token, login, pass, clients, ssh, verifyTls, updatedAt, deleted
     }
 
     init() {}
@@ -200,6 +202,7 @@ struct XuiPanel: Codable, Identifiable, Hashable {
         login = try c.decodeIfPresent(String.self, forKey: .login) ?? ""
         pass = try c.decodeIfPresent(String.self, forKey: .pass)
         clients = try c.decodeIfPresent([String].self, forKey: .clients)
+        ssh = try c.decodeIfPresent(String.self, forKey: .ssh)
         verifyTls = try c.decodeIfPresent(Bool.self, forKey: .verifyTls) ?? true
         updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
         deleted = try c.decodeIfPresent(Bool.self, forKey: .deleted)
@@ -302,6 +305,40 @@ final class XuiStore {
         stub.deleted = true
         stub.updatedAt = xuiNowISO()
         put(Self.panelPrefix + stub.key, Self.encode(stub))
+    }
+
+    /// Ноды QTerm (SSH-сессии) — для привязки панели к серверу.
+    func sessions() -> [Session] {
+        ((try? store.load().sessions) ?? []).filter { $0.deleted != true }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// SSH-сессия сервера панели: явно привязанная → тот же хост → тот же IP.
+    func sessionFor(_ p: XuiPanel) -> Session? {
+        let all = sessions()
+        if let id = p.ssh.flatMap(UUID.init(uuidString:)), let s = all.first(where: { $0.id == id }) { return s }
+        guard let host = PanelURL.tryParse(p.url)?.host else { return nil }
+        if let s = all.first(where: { $0.host.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(host) == .orderedSame }) { return s }
+        let ips = Self.resolve(host)
+        return all.first { ips.contains($0.host.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    nonisolated static func resolve(_ host: String) -> Set<String> {
+        var hints = addrinfo()
+        hints.ai_socktype = SOCK_STREAM
+        var res: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &res) == 0, let first = res else { return [] }
+        defer { freeaddrinfo(first) }
+        var out = Set<String>()
+        var p: UnsafeMutablePointer<addrinfo>? = first
+        while let ai = p {
+            var buf = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(ai.pointee.ai_addr, ai.pointee.ai_addrlen, &buf, socklen_t(buf.count), nil, 0, NI_NUMERICHOST) == 0 {
+                out.insert(String(cString: buf))
+            }
+            p = ai.pointee.ai_next
+        }
+        return out
     }
 
     func names() -> XuiNamesConfig {

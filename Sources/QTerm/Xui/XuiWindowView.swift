@@ -1,9 +1,11 @@
 import SwiftUI
 import AppKit
+import SessionVaultKit
 
 /// Окно «Ноды 3x-ui»: монитор, клиенты × серверы, узлы, ревизия имён, AWG. Порт XuiWindow.xaml.
 struct XuiWindowView: View {
     @StateObject private var m = XuiModel()
+    @EnvironmentObject private var state: AppState
     @ObservedObject private var center = XuiCenter.shared
     private let timer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
 
@@ -24,8 +26,9 @@ struct XuiWindowView: View {
                     case .nodes: nodesView
                     case .names: namesView
                     case .awg: awgView
+                    case .updates: updatesView
                     }
-                    if m.noMaster && m.seg != .awg { setupCard }
+                    if m.noMaster && m.seg != .awg && m.seg != .updates { setupCard }
                 }
                 .frame(minHeight: 260)
                 logView.frame(minHeight: 70, idealHeight: 140)
@@ -34,11 +37,16 @@ struct XuiWindowView: View {
         .padding(12)
         .frame(minWidth: 900, minHeight: 560)
         .onReceive(timer) { _ in Task { await m.tick() } }
-        .onAppear { takeNodeAddRequest() }
+        .onAppear {
+            takeNodeAddRequest()
+            let st = state
+            m.runInTerminal = { [weak st] id, cmd in await st?.runInSession(id, cmd) ?? false }
+        }
         .onChange(of: center.nodeAddRequest?.id) { _, _ in takeNodeAddRequest() }
         .sheet(item: $m.planRequest) { req in PlanSheet(req: req) { ok in m.planRequest = nil; req.done?(ok) } }
         .sheet(item: $m.connectRequest) { req in ConnectSheet(req: req) { r in m.connectRequest = nil; req.done?(r) } }
         .sheet(item: $m.qr) { XuiQRSheet(info: $0) }
+        .sheet(item: $m.pickRequest) { req in PickSheet(req: req) { v in m.pickRequest = nil; req.done?(v) } }
         .sheet(isPresented: $m.showPanels, onDismiss: { Task { await m.reloadPanels() } }) {
             PanelsSheet(store: m.store)
         }
@@ -74,7 +82,11 @@ struct XuiWindowView: View {
                 .help("Итог установщика 3x-ui / AWG: выдели его в терминале (выделение копируется) и нажми. Новая нода или переустановка")
             Button("Обновить") {
                 Task {
-                    if m.seg == .awg { await m.refreshAwg() } else { await m.refresh() }
+                    switch m.seg {
+                    case .awg: await m.refreshAwg()
+                    case .updates: await m.refreshUpdates()
+                    default: await m.refresh()
+                    }
                 }
             }
                 .keyboardShortcut("r", modifiers: .command)
@@ -344,6 +356,70 @@ struct XuiWindowView: View {
         }
     }
 
+    // MARK: обновления
+
+    private var updatesView: some View {
+        VSplitView {
+            VStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Button("Проверить версии") { Task { await m.refreshUpdates() } }
+                        .help("Версия панели, доступная версия и ядро Xray у всех панелей с токеном в QTerm")
+                    Button("Обновить панель…") { Task { await m.updatePanels() } }
+                        .help("Выделенные (или все, где есть обновление): бэкап базы → обновление → проверка версии. Ноды первыми, главная последней, стоп на первой ошибке")
+                    Button("Ядро Xray…") { Task { await m.installXray() } }
+                        .help("Поставить выбранную версию Xray-core на выделенные панели (с бэкапом базы)")
+                    Button("Geo-файлы") { Task { await m.updateGeo() } }
+                    Button("Бэкап сейчас") { Task { await m.backupNow() } }
+                    Button("Версия через терминал…") { Task { await m.installViaTerminalPick() } }
+                        .help("Любая версия панели (откат или конкретный релиз): команда уходит в SSH-терминал сервера, QTerm ждёт новую версию")
+                    Spacer()
+                }
+                Text(m.updStatus).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                Table(m.updRows, selection: $m.updSel) {
+                    TableColumn("") { r in Text("●").foregroundStyle(r.dot) }.width(16)
+                    TableColumn("Панель") { r in Text(r.p.name).bold() }.width(min: 80, ideal: 120)
+                    TableColumn("Роль") { r in Text(r.p.roleText) }.width(min: 80, ideal: 110)
+                    TableColumn("Версия") { r in Text(r.info.version.isEmpty ? "…" : r.info.version) }.width(min: 50, ideal: 70)
+                    TableColumn("Доступна") { r in Text(r.info.available ? r.info.latest + " ⬆" : r.info.latest).foregroundStyle(r.info.available ? Color.blue : Color.primary) }
+                        .width(min: 50, ideal: 80)
+                    TableColumn("Xray") { r in Text(r.info.xray) }.width(min: 50, ideal: 80)
+                    TableColumn("SSH-сессия") { r in Text(r.info.ssh.isEmpty ? "…" : r.info.ssh) }.width(min: 70, ideal: 120)
+                    TableColumn("Последний бэкап") { r in Text(r.lastBackup) }.width(min: 90, ideal: 140)
+                    TableColumn("Состояние") { r in Text(r.info.state).foregroundStyle(r.info.error ? Color.red : Color.secondary).help(r.info.state) }
+                }
+            }
+            .frame(minHeight: 200)
+            VStack(spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(m.bakCaption).bold()
+                    Button("Восстановить базу…") { Task { await m.restoreBackup() } }
+                        .help("Загрузить выбранный бэкап в панель (перед этим — бэкап текущей базы)")
+                    Button("Откатить панель к этому бэкапу…") { Task { await m.rollbackToBackup() } }
+                        .help("Поставить версию панели из бэкапа через SSH-терминал и вернуть базу из него")
+                    Button("Открыть папку") { m.openBackupFolder() }
+                    Spacer()
+                }
+                Table(m.bakRows, selection: $m.bakSel) {
+                    TableColumn("Когда") { b in Text(Self.bakDate.string(from: b.time)) }.width(min: 110, ideal: 140)
+                    TableColumn("Панель") { b in Text(b.panel) }.width(min: 70, ideal: 110)
+                    TableColumn("Версия панели") { b in Text(b.version.isEmpty ? "—" : b.version) }.width(min: 60, ideal: 90)
+                    TableColumn("Размер") { b in Text(XuiModel.bytes(Double(b.size))) }.width(min: 60, ideal: 80)
+                    TableColumn("Файл") { b in Text(b.fileName).foregroundStyle(.secondary) }
+                }
+                .contextMenu(forSelectionType: String.self) { _ in
+                    Button("Восстановить базу…") { Task { await m.restoreBackup() } }
+                    Button("Откатить панель к этому бэкапу…") { Task { await m.rollbackToBackup() } }
+                    Button("Показать в Finder") { if let id = m.bakSel { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: id)]) } }
+                } primaryAction: { _ in Task { await m.restoreBackup() } }
+            }
+            .frame(minHeight: 120)
+        }
+    }
+
+    private static let bakDate: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "dd.MM.yyyy HH:mm:ss"; return f
+    }()
+
     // MARK: лог
 
     private var logView: some View {
@@ -438,6 +514,41 @@ struct PlanSheet: View {
     }
 }
 
+// MARK: - Выбор из списка (версии)
+
+struct PickSheet: View {
+    let req: PickRequest
+    let finish: (String?) -> Void
+    @State private var value = ""
+    @State private var sel: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(req.title).font(.title3.bold())
+            Text(req.text).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            TextField("Версия", text: $value).textFieldStyle(.roundedBorder)
+            List(req.items, id: \.self, selection: $sel) { Text($0).tag($0) }
+                .frame(minHeight: 220)
+                .onChange(of: sel) { _, v in if let v { value = v } }
+                .contextMenu(forSelectionType: String.self) { _ in } primaryAction: { ids in
+                    if let v = ids.first { finish(v) }
+                }
+            HStack {
+                Spacer()
+                Button("Отмена") { finish(nil) }.keyboardShortcut(.cancelAction)
+                Button(req.ok) {
+                    let v = value.trimmingCharacters(in: .whitespaces)
+                    if !v.isEmpty { finish(v) }
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 440, height: 480)
+        .onAppear { value = req.selected ?? ""; sel = req.selected }
+    }
+}
+
 // MARK: - Подключение ноды / токен
 
 struct ConnectSheet: View {
@@ -509,6 +620,8 @@ struct PanelsSheet: View {
     @State private var login = ""
     @State private var secret = ""
     @State private var verify = true
+    @State private var ssh = ""
+    @State private var sessions: [Session] = []
     @State private var result = ""
     @State private var nodeAdd: NodeAddRequest?
 
@@ -541,6 +654,10 @@ struct PanelsSheet: View {
                         if role == "awg" { TextField("Логин админа awg-panel (2FA должна быть выключена)", text: $login) }
                         SecureField(secretCaption, text: $secret)
                         Toggle("Проверять сертификат", isOn: $verify)
+                        Picker("SSH-сессия сервера (установка/откат версии в терминале)", selection: $ssh) {
+                            Text("Авто (по адресу / IP)").tag("")
+                            ForEach(sessions) { s in Text("\(s.name)  ·  \(s.username)@\(s.host)").tag(s.id.uuidString) }
+                        }
                         Text(result).foregroundStyle(.secondary).textSelection(.enabled)
                     }
                     .textFieldStyle(.roundedBorder)
@@ -556,7 +673,7 @@ struct PanelsSheet: View {
         }
         .padding(16)
         .frame(minWidth: 820, minHeight: 520)
-        .onAppear { reload(nil) }
+        .onAppear { sessions = store.sessions(); reload(nil) }
         .onChange(of: sel) { _, id in show(panels.first { $0.id == id }) }
         .sheet(item: $nodeAdd) { req in
             NodeAddSheet(store: store, selection: req.text) { saved, _, passwords in
@@ -589,6 +706,7 @@ struct PanelsSheet: View {
         login = p?.login ?? ""
         secret = ""
         verify = p?.verifyTls ?? true
+        ssh = p?.ssh.flatMap { id in sessions.first { $0.id.uuidString.caseInsensitiveCompare(id) == .orderedSame }?.id.uuidString } ?? ""
         result = p == nil ? "Новая панель" : (p!.token.isEmpty ? "Не задано" : (p!.isAwg ? "Пароль сохранён" : "Токен сохранён"))
     }
 
@@ -607,6 +725,7 @@ struct PanelsSheet: View {
         p.url = url.trimmingCharacters(in: .whitespaces)
         p.token = token
         p.verifyTls = verify
+        p.ssh = ssh.isEmpty ? nil : ssh
         return p
     }
 

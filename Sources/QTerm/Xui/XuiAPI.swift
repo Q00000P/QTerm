@@ -35,6 +35,24 @@ final class XuiHTTP {
 
     deinit { session.finishTasksAndInvalidate() }
 
+    /// Запрос с готовым телом (multipart и т.п.).
+    func sendRaw(_ method: String, _ urlString: String, body: Data, contentType: String,
+                 headers: [String: String] = [:]) async throws -> (Int, Data) {
+        guard let url = URL(string: urlString) else { throw XuiError("\(label): кривой адрес \(urlString)") }
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.httpBody = body
+        req.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        do {
+            let (data, resp) = try await session.data(for: req)
+            return ((resp as? HTTPURLResponse)?.statusCode ?? 0, data)
+        } catch let e as URLError {
+            throw XuiError(e.code == .timedOut ? "\(label): таймаут" : "\(label): нет связи (\(e.localizedDescription))")
+        }
+    }
+
     /// Запрос → (код, тело). Сетевые ошибки — в понятные XuiError.
     func send(_ method: String, _ urlString: String, json: Any? = nil,
               headers: [String: String] = [:]) async throws -> (Int, Data) {
@@ -262,6 +280,42 @@ final class XuiAPI {
     func createToken(_ name: String, scope: String) async throws -> String? {
         let o = try await post("/setting/apiTokens/create", ["name": name, "scope": scope, "expiresAt": 0] as JObj) as? JObj
         return o?["token"] as? String
+    }
+
+    // MARK: обновления панели / ядро Xray / база
+
+    /// Текущая и последняя версия панели (панель сама спрашивает GitHub). nil — не достучалась.
+    func updateInfo() async -> JObj? { try? await get("/server/getPanelUpdateInfo") as? JObj }
+
+    /// Самообновление панели (update.sh в отдельном юните systemd). Возвращает runId для опроса статуса.
+    func startUpdate() async throws -> String? { (try await post("/server/updatePanel") as? JObj)?["runId"] as? String }
+
+    /// {runId, state: pending|success|failed, exitCode, finishedAt} последнего самообновления.
+    func updateStatus() async throws -> JObj? { try await get("/server/getUpdateStatus") as? JObj }
+
+    /// Версии Xray-core, доступные для установки (панель берёт их с GitHub).
+    func xrayVersions() async throws -> [String] {
+        ((try await get("/server/getXrayVersion") as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }
+    }
+
+    func installXray(_ version: String) async throws { try await post("/server/installXray/" + xuiEscape(version)) }
+    func updateGeo() async throws { try await post("/server/updateGeofile") }
+
+    /// Загрузить базу в панель (её адреса/сертификаты/привязка узла сохраняются). Панель перезапустится.
+    func importDb(_ db: Data) async throws {
+        let boundary = "qterm-\(UUID().uuidString)"
+        var body = Data()
+        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"db\"; filename=\"x-ui.db\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
+        body.append(db)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        let (code, data) = try await http.sendRaw("POST", url.base + "/panel/api/server/importDB", body: body,
+                                                  contentType: "multipart/form-data; boundary=\(boundary)",
+                                                  headers: ["Authorization": "Bearer " + token])
+        if code == 401 || code == 403 { throw XuiError("\(label): нет прав на загрузку базы (\(code))") }
+        let js = J.parse(data) as? JObj
+        if !(js.map { J.bool($0, "success") } ?? false) {
+            throw XuiError("\(label): база не загрузилась: \(js.map { J.str($0, "msg") } ?? "HTTP \(code)")")
+        }
     }
 
     /// Ссылка подписки по настройкам панели (subURI → иначе схема/домен/порт/путь).

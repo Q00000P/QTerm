@@ -104,10 +104,7 @@ final class XuiOps {
     private let names: NameUnifier
     private let log: (String, LogKind) -> Void
 
-    static var backupDir: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("QTerm/xui-backup", isDirectory: true)
-    }
+    static var backupDir: URL { XuiBackups.dir }
 
     init(_ names: NameUnifier, log: @escaping (String, LogKind) -> Void) {
         self.names = names
@@ -250,14 +247,9 @@ final class XuiOps {
 
     // MARK: бэкапы
 
-    func backup(_ api: XuiAPI, _ name: String) async throws -> String {
-        try FileManager.default.createDirectory(at: Self.backupDir, withIntermediateDirectories: true)
-        let safe = String(name.map { $0.isLetter || $0.isNumber || "-_.".contains($0) ? $0 : "_" })
-        let f = DateFormatter()
-        f.dateFormat = "yyyyMMdd-HHmmss"
-        let url = Self.backupDir.appendingPathComponent("\(safe)-\(f.string(from: Date())).db")
-        try await api.getDb().write(to: url)
-        return url.path
+    /// База панели → «ИМЯ__vВЕРСИЯ__дата.db» (версия — чтобы было к чему откатываться).
+    func backup(_ api: XuiAPI, _ name: String? = nil) async throws -> String {
+        try await XuiBackups.save(api, name ?? api.label)
     }
 
     // MARK: нода: план
@@ -452,7 +444,7 @@ final class XuiOps {
     @discardableResult
     func applyNode(_ master: XuiAPI, _ p: NodePlan) async throws -> Int {
         head("Нода «\(p.name)»")
-        let b1 = try await backup(master, "master")
+        let b1 = try await backup(master)
         ok("бэкап главной → " + b1)
         let b2 = try await backup(p.node, p.name)
         ok("бэкап ноды → " + b2)

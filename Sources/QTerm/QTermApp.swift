@@ -1130,6 +1130,27 @@ final class AppState: ObservableObject {
         return true
     }
 
+    /// «Ноды 3x-ui»: команду — в SSH-терминал ноды (установка/откат версии панели).
+    /// Есть подключённая вкладка этой ноды — в неё, нет — открыть; дождаться подключения и шелла.
+    func runInSession(_ sessionID: UUID, _ command: String) async -> Bool {
+        guard let s = sessions.first(where: { $0.id == sessionID && $0.deleted != true }) else { return false }
+        var tab = tabs.first { $0.sessionID == sessionID && connections[sessionID]?.status == .connected }
+        let fresh = tab == nil
+        if tab == nil { tab = openTab(for: s) } else { activeTabID = tab!.id }
+        guard let t = tab else { return false }
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first { $0.title.hasPrefix("QTerm") }?.makeKeyAndOrderFront(nil)
+        for _ in 0..<120 {
+            if connections[sessionID]?.status == .connected, channel(for: t) != nil { break }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        guard connections[sessionID]?.status == .connected, let ch = channel(for: t) else { return false }
+        if fresh { try? await Task.sleep(nanoseconds: 1_500_000_000) }   // шелл поднимается
+        ch.send(Array((command + "\n").utf8)[...])
+        focusActiveTerminal()
+        return true
+    }
+
     /// Вернуть фокус терминалу активной вкладки (после шитов/окон).
     func focusActiveTerminal() {
         guard let tab = activeTab, let tv = anyTerminal(for: tab) else { return }
