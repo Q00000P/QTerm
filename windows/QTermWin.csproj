@@ -9,7 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>QTerm</AssemblyName>
     <RootNamespace>QTermWin</RootNamespace>
-    <Version>3.11.0</Version>
+    <Version>3.11.1</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- Per-Monitor V2: чёткий UI и верные координаты на мониторах с разным масштабом -->
     <ApplicationManifest>app.manifest</ApplicationManifest>

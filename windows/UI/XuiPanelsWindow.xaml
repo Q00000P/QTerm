@@ -56,12 +56,25 @@
                     </ComboBox>
                     <TextBlock Style="{StaticResource Cap}" Text="Адрес панели — как в браузере (https://домен:порт/путь/)"/>
                     <TextBox x:Name="UrlBox" Padding="6"/>
-                    <StackPanel x:Name="LoginPanel" Visibility="Collapsed">
-                        <TextBlock Style="{StaticResource Cap}" Text="Логин админа awg-panel (2FA должна быть выключена — иначе панель не пускает по API)"/>
+                    <StackPanel x:Name="LoginPanel">
+                        <TextBlock x:Name="LoginCap" Style="{StaticResource Cap}" Text="Логин админа 3x-ui (для выпуска и автоперевыпуска токена)"/>
                         <TextBox x:Name="LoginBox" Padding="6"/>
                     </StackPanel>
                     <TextBlock x:Name="TokenCap" Style="{StaticResource Cap}" Text="API-токен (Настройки панели → Учетная запись → API-токены). Пусто — оставить сохранённый"/>
                     <PasswordBox x:Name="TokenBox" Padding="6"/>
+                    <StackPanel x:Name="XuiAuthPanel">
+                        <TextBlock x:Name="PassCap" Style="{StaticResource Cap}" TextWrapping="Wrap"
+                                   Text="Пароль админа — чтобы выпустить токен здесь и чтобы QTerm сам перевыпускал его, если панель перестанет его принимать"/>
+                        <PasswordBox x:Name="PassBox" Padding="6"/>
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="TwoFaBox" Padding="6" ToolTip="Код 2FA, если включена"/>
+                            <Button Grid.Column="1" Content="Выпустить токен по паролю" Click="Issue_Click" Padding="10,4" Margin="8,0,0,0"/>
+                        </Grid>
+                    </StackPanel>
                     <TextBlock Style="{StaticResource Cap}" Text="Сертификат"/>
                     <ComboBox x:Name="TlsBox" SelectedIndex="0">
                         <ComboBoxItem Content="Проверять"/>
@@ -69,7 +82,8 @@
                     </ComboBox>
                     <TextBlock Style="{StaticResource Cap}" Text="SSH-сессия этого сервера — для установки и отката версии панели в терминале. «Авто» — найду по адресу/IP"/>
                     <ComboBox x:Name="SshBox" DisplayMemberPath="Name"/>
-                    <TextBlock x:Name="ResultText" Style="{StaticResource Cap}" Margin="0,12,0,0"/>
+                    <TextBox x:Name="ResultText" Margin="0,12,0,0" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                             Foreground="{DynamicResource DimBrush}" TextWrapping="Wrap" Padding="0"/>
                 </StackPanel>
             </ScrollViewer>
         </DockPanel>

@@ -50,6 +50,9 @@ public partial class App : Application
         // открываются на мониторе владельца, помнят размер/положение (после шрифта — меряем с ним)
         QTermShared.WindowFit.Register("QTerm");
 
+        // строки всех таблиц копируются: Ctrl+C и «Копировать» в контекстном меню
+        QTermWin.UI.ListCopy.Register();
+
         DispatcherUnhandledException += (_, args) =>
         {
             Report(args.Exception);

@@ -17,6 +17,37 @@ final class XuiCenter: ObservableObject {
     /// Выделение терминала уже в буфере (выделил = скопировал); берём его.
     static func clipboardText() -> String { NSPasteboard.general.string(forType: .string) ?? "" }
 
+    /// Куда писать про автоперевыпуск токена (лог окна «Ноды 3x-ui»).
+    var notice: ((String, LogKind) -> Void)?
+    private var reissued: [String: (at: Date, ok: Bool)] = [:]
+
+    /// Панель не приняла токен (401): выпустить новый по сохранённым логину/паролю и сохранить.
+    func reissueToken(_ id: String) async -> String? {
+        guard let store, var p = store.panels().first(where: { $0.id == id }), p.isXui,
+              !p.login.isEmpty, let pass = p.pass, !pass.isEmpty else { return nil }
+        // только что перевыпущен — старые копии панели в окне ещё со старым токеном; пароль не подошёл — не долбить вход
+        if let r = reissued[id], Date().timeIntervalSince(r.at) < 60 { return r.ok ? p.token : nil }
+        reissued[id] = (Date(), false)
+        notice?("  ↻ «\(p.name)»: панель не приняла токен — выпускаю новый по сохранённому паролю", .warn)
+        do {
+            let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyMMdd-HHmmss"
+            let r = try await XuiLogin.issueToken(url: p.url, login: p.login, password: pass, twoFactor: nil,
+                                                  verifyTls: p.verifyTls, tokenName: "qterm-" + f.string(from: Date()))
+            guard let t = r.token, !t.isEmpty else {
+                notice?("  ✗ «\(p.name)»: \(r.needTwoFactor ? "включена 2FA — выпусти токен вручную в «Панели и токены…»" : r.message)", .err)
+                return nil
+            }
+            p.token = t
+            store.save(p)
+            reissued[id] = (Date(), true)
+            notice?("  ✓ «\(p.name)»: новый токен выпущен и сохранён", .ok)
+            return t
+        } catch {
+            notice?("  ✗ «\(p.name)»: \(error.localizedDescription)", .err)
+            return nil
+        }
+    }
+
     /// Пароли из итога установки не должны висеть в буфере.
     static func scrubClipboard(_ passwords: [String]) {
         let clip = clipboardText()

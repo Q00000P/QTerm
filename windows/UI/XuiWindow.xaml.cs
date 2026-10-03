@@ -117,7 +117,8 @@ public partial class XuiWindow : Window
                 await RefreshAwgAsync(quiet: true);
         };
         Loaded += (_, _) => _timer.Start();
-        Closed += (_, _) => { _timer.Stop(); _master?.Dispose(); DisposeRevision(); };
+        XuiReauth.Notice += OnReauthNotice;
+        Closed += (_, _) => { XuiReauth.Notice -= OnReauthNotice; _timer.Stop(); _master?.Dispose(); DisposeRevision(); };
         PreviewKeyDown += async (_, e) =>
         {
             if (e.Key == Key.F5) { e.Handled = true; await RefreshAsync(); }
@@ -131,6 +132,9 @@ public partial class XuiWindow : Window
         LogBox.AppendText((LogBox.Text.Length > 0 ? "\n" : "") + line);
         LogBox.ScrollToEnd();
     }
+
+    private void OnReauthNotice(string line, LogKind kind) =>
+        Dispatcher.BeginInvoke(() => Log(line, kind));
 
     private void Status(string s) => StatusText.Text = s;
 

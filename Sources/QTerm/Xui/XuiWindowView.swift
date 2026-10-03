@@ -5,6 +5,7 @@ import SessionVaultKit
 /// Окно «Ноды 3x-ui»: монитор, клиенты × серверы, узлы, ревизия имён, AWG. Порт XuiWindow.xaml.
 struct XuiWindowView: View {
     @StateObject private var m = XuiModel()
+    @State private var monSel = Set<String>()
     @EnvironmentObject private var state: AppState
     @ObservedObject private var center = XuiCenter.shared
     private let timer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
@@ -41,6 +42,8 @@ struct XuiWindowView: View {
             takeNodeAddRequest()
             let st = state
             m.runInTerminal = { [weak st] id, cmd in await st?.runInSession(id, cmd) ?? false }
+            let mm = m
+            center.notice = { [weak mm] s, k in mm?.log(s, k) }
         }
         .onChange(of: center.nodeAddRequest?.id) { _, _ in takeNodeAddRequest() }
         .sheet(item: $m.planRequest) { req in PlanSheet(req: req) { ok in m.planRequest = nil; req.done?(ok) } }
@@ -91,7 +94,7 @@ struct XuiWindowView: View {
             }
                 .keyboardShortcut("r", modifiers: .command)
             if m.busy { ProgressView().controlSize(.small) }
-            Text(m.status).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            Text(m.status).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail).textSelection(.enabled)
             Spacer()
         }
     }
@@ -110,7 +113,7 @@ struct XuiWindowView: View {
             HStack {
                 Button("Проверить и сохранить") { Task { await m.setupSave() } }.keyboardShortcut(.defaultAction)
                 Button("＋ Из выделения / по паролю…") { m.nodeAdd = NodeAddRequest(text: XuiCenter.clipboardText()) }
-                Text(m.setupResult).foregroundStyle(.secondary)
+                Text(m.setupResult).foregroundStyle(.secondary).textSelection(.enabled)
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -123,7 +126,7 @@ struct XuiWindowView: View {
     // MARK: монитор
 
     private var monitorView: some View {
-        Table(m.monRows) {
+        Table(m.monRows, selection: $monSel) {
             TableColumn("Сервер") { r in Text(r.name).bold() }.width(min: 120, ideal: 160)
             TableColumn("Статус") { r in Text(r.status).foregroundStyle(r.statusColor) }.width(min: 60, ideal: 80)
             TableColumn("Пинг") { r in Text(r.ping) }.width(min: 40, ideal: 60)
@@ -134,6 +137,16 @@ struct XuiWindowView: View {
             TableColumn("Онлайн / клиентов") { r in Text(r.clients) }.width(min: 70, ideal: 110)
             TableColumn("Сеть") { r in Text(r.net) }.width(min: 120, ideal: 190)
             TableColumn("Ошибка") { r in Text(r.error).foregroundStyle(.red).help(r.error) }
+        }
+        .contextMenu(forSelectionType: String.self) { ids in
+            Button("Копировать") { XuiCopy.put(monText(ids)) }
+        }
+        .copyRows { monText(monSel).joined(separator: "\n") }
+    }
+
+    private func monText(_ ids: Set<String>) -> [String] {
+        m.monRows.filter { ids.contains($0.id) }.map {
+            XuiCopy.row([$0.name, $0.status, $0.ping, $0.cpu, $0.ram, $0.uptime, $0.xray, $0.clients, $0.net, $0.error])
         }
     }
 
@@ -171,10 +184,21 @@ struct XuiWindowView: View {
                 TableColumn("ID подписки") { r in Text(r.subId) }.width(min: 80, ideal: 150)
             }
             .contextMenu(forSelectionType: String.self) { ids in
+                if !ids.isEmpty {
+                    Button("Копировать") { XuiCopy.put(clientText(ids)) }
+                    Divider()
+                }
                 clientMenu(m.selectedClients(ids))
             } primaryAction: { ids in
                 if let c = m.selectedClients(ids).first { m.showQR(c) }
             }
+            .copyRows { clientText(m.clientSel).joined(separator: "\n") }
+        }
+    }
+
+    private func clientText(_ ids: Set<String>) -> [String] {
+        m.clientRows.filter { ids.contains($0.id) }.map {
+            XuiCopy.row([$0.email, $0.enabled] + $0.cells.map(\.0) + [$0.traffic, $0.expiry, $0.subId])
         }
     }
 
@@ -268,11 +292,21 @@ struct XuiWindowView: View {
                 TableColumn("Версия") { r in Text(r.src.panelVersion) }.width(min: 50, ideal: 70)
                 TableColumn("Ошибка") { r in Text(r.src.lastError).foregroundStyle(.red).help(r.src.lastError) }
             }
-            .contextMenu(forSelectionType: Int.self) { _ in
+            .contextMenu(forSelectionType: Int.self) { ids in
+                Button("Копировать") { XuiCopy.put(nodeText(ids)) }
+                Divider()
                 Button("Ревизия ноды") { Task { await m.nodeRevise() } }
                 Button("Выровнять клиентов") { Task { await m.nodeSync() } }
                 Button("Токен ноды…") { Task { await m.nodeToken() } }
             } primaryAction: { _ in Task { await m.nodeRevise() } }
+            .copyRows { nodeText(m.nodeSel.map { [$0] } ?? []).joined(separator: "\n") }
+        }
+    }
+
+    private func nodeText(_ ids: Set<Int>) -> [String] {
+        m.nodeRows.filter { ids.contains($0.id) }.map {
+            XuiCopy.row([$0.name, $0.address, $0.status, $0.src.enable ? "да" : "нет", "\($0.src.inboundCount)",
+                         "\($0.src.clientCount)", $0.src.panelVersion, $0.src.lastError])
         }
     }
 
@@ -327,7 +361,7 @@ struct XuiWindowView: View {
                 Button("Вкл / выкл") { Task { await m.awgToggle() } }
                 Button("Удалить") { Task { await m.awgDelete() } }
                 Button("Панели…") { m.showPanels = true }
-                Text(m.awgStatus).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                Text(m.awgStatus).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail).textSelection(.enabled)
                 Spacer()
             }
             Table(m.awgRows, selection: $m.awgSel) {
@@ -341,6 +375,10 @@ struct XuiWindowView: View {
                 TableColumn("Трафик ↓/↑") { r in Text(r.traffic) }.width(min: 100, ideal: 150)
             }
             .contextMenu(forSelectionType: String.self) { ids in
+                if !ids.isEmpty {
+                    Button("Копировать") { XuiCopy.put(awgText(ids)) }
+                    Divider()
+                }
                 if ids.count == 1, let c = m.awgSelected(ids).first {
                     Button("QR") { Task { await m.awgQR(c) } }
                     Button("Конфиг → буфер") { m.awgSel = ids; Task { await m.awgCopy() } }
@@ -353,6 +391,13 @@ struct XuiWindowView: View {
             } primaryAction: { ids in
                 if let c = m.awgSelected(ids).first { Task { await m.awgQR(c) } }
             }
+            .copyRows { awgText(m.awgSel).joined(separator: "\n") }
+        }
+    }
+
+    private func awgText(_ ids: Set<String>) -> [String] {
+        m.awgRows.filter { ids.contains($0.id) }.map {
+            XuiCopy.row([$0.src.panel, $0.src.name, $0.iface, $0.src.address, $0.src.enabled ? "да" : "нет", $0.handshake, $0.traffic])
         }
     }
 
@@ -374,7 +419,7 @@ struct XuiWindowView: View {
                         .help("Любая версия панели (откат или конкретный релиз): команда уходит в SSH-терминал сервера, QTerm ждёт новую версию")
                     Spacer()
                 }
-                Text(m.updStatus).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                Text(m.updStatus).foregroundStyle(.secondary).lineLimit(1).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                 Table(m.updRows, selection: $m.updSel) {
                     TableColumn("") { r in Text("●").foregroundStyle(r.dot) }.width(16)
                     TableColumn("Панель") { r in Text(r.p.name).bold() }.width(min: 80, ideal: 120)
@@ -387,6 +432,10 @@ struct XuiWindowView: View {
                     TableColumn("Последний бэкап") { r in Text(r.lastBackup) }.width(min: 90, ideal: 140)
                     TableColumn("Состояние") { r in Text(r.info.state).foregroundStyle(r.info.error ? Color.red : Color.secondary).help(r.info.state) }
                 }
+                .contextMenu(forSelectionType: String.self) { ids in
+                    Button("Копировать") { XuiCopy.put(updText(ids)) }
+                }
+                .copyRows { updText(m.updSel).joined(separator: "\n") }
             }
             .frame(minHeight: 200)
             VStack(spacing: 6) {
@@ -406,13 +455,29 @@ struct XuiWindowView: View {
                     TableColumn("Размер") { b in Text(XuiModel.bytes(Double(b.size))) }.width(min: 60, ideal: 80)
                     TableColumn("Файл") { b in Text(b.fileName).foregroundStyle(.secondary) }
                 }
-                .contextMenu(forSelectionType: String.self) { _ in
+                .contextMenu(forSelectionType: String.self) { ids in
+                    Button("Копировать") { XuiCopy.put(bakText(ids)) }
+                    Button("Копировать путь к файлу") { XuiCopy.put(Array(ids)) }
+                    Divider()
                     Button("Восстановить базу…") { Task { await m.restoreBackup() } }
                     Button("Откатить панель к этому бэкапу…") { Task { await m.rollbackToBackup() } }
                     Button("Показать в Finder") { if let id = m.bakSel { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: id)]) } }
                 } primaryAction: { _ in Task { await m.restoreBackup() } }
+                .copyRows { bakText(m.bakSel.map { [$0] } ?? []).joined(separator: "\n") }
             }
             .frame(minHeight: 120)
+        }
+    }
+
+    private func updText(_ ids: Set<String>) -> [String] {
+        m.updRows.filter { ids.contains($0.id) }.map {
+            XuiCopy.row([$0.p.name, $0.p.roleText, $0.info.version, $0.info.latest, $0.info.xray, $0.info.ssh, $0.lastBackup, $0.info.state])
+        }
+    }
+
+    private func bakText(_ ids: Set<String>) -> [String] {
+        m.bakRows.filter { ids.contains($0.id) }.map {
+            XuiCopy.row([Self.bakDate.string(from: $0.time), $0.panel, $0.version, XuiModel.bytes(Double($0.size)), $0.path])
         }
     }
 
@@ -423,22 +488,7 @@ struct XuiWindowView: View {
     // MARK: лог
 
     private var logView: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(m.logLines) { l in
-                        Text(l.text).foregroundStyle(l.color).font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled).id(l.id)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(6)
-            }
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.6))
-            .onChange(of: m.logLines.count) { _, _ in
-                if let last = m.logLines.last { proxy.scrollTo(last.id, anchor: .bottom) }
-            }
-        }
+        XuiLogView(lines: m.logLines, onClear: { [weak mm = m] in mm?.logLines.removeAll() })
     }
 }
 
@@ -619,6 +669,8 @@ struct PanelsSheet: View {
     @State private var url = ""
     @State private var login = ""
     @State private var secret = ""
+    @State private var pass = ""
+    @State private var twoFa = ""
     @State private var verify = true
     @State private var ssh = ""
     @State private var sessions: [Session] = []
@@ -653,6 +705,16 @@ struct PanelsSheet: View {
                         TextField("Адрес панели — как в браузере (https://домен:порт/путь/)", text: $url)
                         if role == "awg" { TextField("Логин админа awg-panel (2FA должна быть выключена)", text: $login) }
                         SecureField(secretCaption, text: $secret)
+                        if role == "master" || role == "node" {
+                            Text("Логин и пароль админа — чтобы выпустить токен здесь и чтобы QTerm сам перевыпускал его, если панель перестанет его принимать.")
+                                .foregroundStyle(.secondary).font(.caption).fixedSize(horizontal: false, vertical: true)
+                            TextField("Логин админа 3x-ui", text: $login)
+                            SecureField(cur?.pass?.isEmpty == false ? "Пароль админа (сохранён; пусто — оставить)" : "Пароль админа", text: $pass)
+                            HStack {
+                                TextField("Код 2FA, если включена", text: $twoFa).frame(width: 200)
+                                Button("Выпустить токен по паролю") { Task { await issue() } }
+                            }
+                        }
                         Toggle("Проверять сертификат", isOn: $verify)
                         Picker("SSH-сессия сервера (установка/откат версии в терминале)", selection: $ssh) {
                             Text("Авто (по адресу / IP)").tag("")
@@ -705,23 +767,33 @@ struct PanelsSheet: View {
         url = p?.url ?? ""
         login = p?.login ?? ""
         secret = ""
+        pass = ""
+        twoFa = ""
         verify = p?.verifyTls ?? true
         ssh = p?.ssh.flatMap { id in sessions.first { $0.id.uuidString.caseInsensitiveCompare(id) == .orderedSame }?.id.uuidString } ?? ""
         result = p == nil ? "Новая панель" : (p!.token.isEmpty ? "Не задано" : (p!.isAwg ? "Пароль сохранён" : "Токен сохранён"))
     }
 
-    private func fromForm() -> XuiPanel? {
+    private func fromForm(requireToken: Bool = true) -> XuiPanel? {
         guard PanelURL.tryParse(url) != nil else { result = "✗ не разобрал адрес"; return nil }
         var token = secret.trimmingCharacters(in: .whitespaces)
         if token.isEmpty { token = cur?.token ?? "" }
-        if token.isEmpty { result = role.hasPrefix("awg") ? "✗ Нужен пароль" : "✗ Нужен API-токен"; return nil }
+        if token.isEmpty && requireToken {
+            result = role.hasPrefix("awg") ? "✗ Нужен пароль" : "✗ Нужен API-токен — или логин и пароль → «Выпустить токен по паролю»"
+            return nil
+        }
         if role == "awg" && login.trimmingCharacters(in: .whitespaces).isEmpty { result = "✗ Нужен логин"; return nil }
         var p = cur ?? XuiPanel()
         p.name = name.trimmingCharacters(in: .whitespaces).isEmpty
             ? String((PanelURL.tryParse(url)?.host ?? "").split(separator: ".").first ?? "").uppercased()
             : name.trimmingCharacters(in: .whitespaces)
         p.role = role
-        p.login = role == "awg" ? login.trimmingCharacters(in: .whitespaces) : (role == "awg1" ? "" : p.login)
+        p.login = role == "awg1" ? "" : login.trimmingCharacters(in: .whitespaces)
+        if role == "master" || role == "node" {
+            if !pass.isEmpty { p.pass = pass }
+        } else {
+            p.pass = nil
+        }
         p.url = url.trimmingCharacters(in: .whitespaces)
         p.token = token
         p.verifyTls = verify
@@ -746,6 +818,24 @@ struct PanelsSheet: View {
                 nodes = ", узлов: \(n)"
             }
             result = "✓ отвечает, 3x-ui \(J.str(st, "panelVersion"))\(nodes)"
+        } catch { result = "✗ " + error.localizedDescription }
+    }
+
+    private func issue() async {
+        guard var p = fromForm(requireToken: false) else { return }
+        guard !p.login.isEmpty, let pw = p.pass, !pw.isEmpty else { result = "✗ Нужны логин и пароль админа"; return }
+        result = "вхожу в панель…"
+        do {
+            let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyMMdd-HHmmss"
+            let name = "qterm-" + f.string(from: Date())
+            let code = twoFa.trimmingCharacters(in: .whitespaces)
+            let r = try await XuiLogin.issueToken(url: p.url, login: p.login, password: pw, twoFactor: code.isEmpty ? nil : code,
+                                                  verifyTls: p.verifyTls, tokenName: name)
+            guard let t = r.token, !t.isEmpty else { result = "✗ " + r.message; return }
+            p.token = t
+            store.save(p)
+            reload(p.id)
+            result = "✓ токен «\(name)» выпущен и сохранён вместе с паролем"
         } catch { result = "✗ " + error.localizedDescription }
     }
 

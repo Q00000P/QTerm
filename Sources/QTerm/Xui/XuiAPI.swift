@@ -86,8 +86,12 @@ final class XuiAPI {
     let label: String
     let url: PanelURL
     let verifyTls: Bool
-    private let token: String
+    private var token: String
     private let http: XuiHTTP
+    /// Перевыпуск токена при 401 (сохранённые логин/пароль админа). Один раз на объект API.
+    var reauth: (() async -> String?)?
+    private var reauthTask: Task<String?, Never>?
+    private let reauthLock = NSLock()
 
     init(label: String, url: String, token: String, verifyTls: Bool = true) throws {
         self.label = label
@@ -98,19 +102,47 @@ final class XuiAPI {
     }
 
     static func forPanel(_ p: XuiPanel) throws -> XuiAPI {
-        try XuiAPI(label: p.name, url: p.url, token: p.token, verifyTls: p.verifyTls)
+        let api = try XuiAPI(label: p.name, url: p.url, token: p.token, verifyTls: p.verifyTls)
+        if p.isXui, !p.login.isEmpty, !(p.pass ?? "").isEmpty {
+            let pid = p.id
+            api.reauth = { @MainActor in await XuiCenter.shared.reissueToken(pid) }
+        }
+        return api
     }
 
+    /// 401 от панели: токен в QTerm ей неизвестен (удалён/выключен/истёк или панель переустановлена).
+    static func unauthorized(_ label: String) -> XuiError {
+        XuiError("\(label): панель не принимает токен (401) — его удалили, выключили, он истёк или панель переустановлена. "
+                 + "«Панели и токены…» → панель → логин и пароль админа → «Выпустить токен» (с сохранённым паролем QTerm дальше перевыпускает сам)")
+    }
+
+    /// Новый токен (один перевыпуск на объект; параллельные запросы ждут тот же).
+    private func renewToken() async -> String? {
+        guard let reauth else { return nil }
+        let task: Task<String?, Never> = reauthLock.withLock {
+            if let t = reauthTask { return t }
+            let t = Task { await reauth() }
+            reauthTask = t
+            return t
+        }
+        guard let t = await task.value, !t.isEmpty else { return nil }
+        reauthLock.withLock { token = t }
+        return t
+    }
+
+    private var bearer: [String: String] { ["Authorization": "Bearer " + reauthLock.withLock { token }] }
+
     private func raw(_ method: String, _ path: String, _ body: Any?) async throws -> (Int, Data) {
-        try await http.send(method, url.base + "/panel/api" + path, json: body,
-                            headers: ["Authorization": "Bearer " + token])
+        let r = try await http.send(method, url.base + "/panel/api" + path, json: body, headers: bearer)
+        guard r.0 == 401, await renewToken() != nil else { return r }
+        return try await http.send(method, url.base + "/panel/api" + path, json: body, headers: bearer)
     }
 
     @discardableResult
     func call(_ method: String, _ path: String, _ body: Any? = nil) async throws -> Any? {
         let (code, data) = try await raw(method, path, body)
         switch code {
-        case 401: throw XuiError("\(label): токен не принят (401)")
+        case 401: throw Self.unauthorized(label)
         case 403: throw XuiError("\(label): 403 — токену не хватает прав или адрес не совпадает с доменом панели (webDomain)")
         case 404: throw XuiError("\(label): 404 на \(path) — проверь базовый путь панели")
         default: break
@@ -216,6 +248,8 @@ final class XuiAPI {
 
     func getDb() async throws -> Data {
         let (code, data) = try await raw("GET", "/server/getDb", nil)
+        if code == 401 { throw Self.unauthorized(label) }
+        if code == 403 { throw XuiError("\(label): токену не хватает прав на скачивание базы (403) — нужен токен с правами admin") }
         guard code == 200, data.count >= 16, String(data: data.prefix(15), encoding: .ascii) == "SQLite format 3" else {
             throw XuiError("\(label): не удалось скачать базу (HTTP \(code))")
         }
@@ -308,10 +342,14 @@ final class XuiAPI {
         body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"db\"; filename=\"x-ui.db\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
         body.append(db)
         body.append(Data("\r\n--\(boundary)--\r\n".utf8))
-        let (code, data) = try await http.sendRaw("POST", url.base + "/panel/api/server/importDB", body: body,
-                                                  contentType: "multipart/form-data; boundary=\(boundary)",
-                                                  headers: ["Authorization": "Bearer " + token])
-        if code == 401 || code == 403 { throw XuiError("\(label): нет прав на загрузку базы (\(code))") }
+        func send() async throws -> (Int, Data) {
+            try await http.sendRaw("POST", url.base + "/panel/api/server/importDB", body: body,
+                                   contentType: "multipart/form-data; boundary=\(boundary)", headers: bearer)
+        }
+        var (code, data) = try await send()
+        if code == 401, await renewToken() != nil { (code, data) = try await send() }
+        if code == 401 { throw Self.unauthorized(label) }
+        if code == 403 { throw XuiError("\(label): токену не хватает прав на загрузку базы (403) — нужен токен с правами admin") }
         let js = J.parse(data) as? JObj
         if !(js.map { J.bool($0, "success") } ?? false) {
             throw XuiError("\(label): база не загрузилась: \(js.map { J.str($0, "msg") } ?? "HTTP \(code)")")

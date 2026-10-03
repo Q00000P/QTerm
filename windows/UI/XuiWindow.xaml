@@ -14,6 +14,15 @@
             <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
+        <!-- выделяемый текст статуса (TextBlock не выделяется) -->
+        <Style x:Key="DimSel" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
         <Style x:Key="Grid" TargetType="ListView">
             <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
@@ -53,8 +62,7 @@
             <Button Content="＋ Нода из выделения" Click="NodeFromSelection_Click" Margin="6,0,0,0"
                     ToolTip="Итог установщика 3x-ui / AWG: выдели его в терминале (выделение копируется) и нажми. Новая нода или переустановка существующей"/>
             <Button Content="Обновить" Click="Refresh_Click" Margin="6,0,0,0" ToolTip="F5"/>
-            <TextBlock x:Name="StatusText" Style="{StaticResource Dim}" Margin="12,0,0,0"
-                       TextTrimming="CharacterEllipsis"/>
+            <TextBox x:Name="StatusText" Style="{StaticResource DimSel}" Margin="12,0,0,0"/>
         </DockPanel>
 
         <!-- Разделы -->
@@ -201,7 +209,7 @@
                     <Button Content="Удалить" Click="AwgDelete_Click" Margin="6,0,0,0"/>
                     <Button Content="AWG-панели…" Click="Panels_Click" Margin="6,0,0,0"
                             ToolTip="Добавить awg-panel ноды: адрес, логин и пароль админа (роль «AWG-панель»)"/>
-                    <TextBlock x:Name="AwgStatus" Style="{StaticResource Dim}" Margin="10,0,0,0" TextTrimming="CharacterEllipsis"/>
+                    <TextBox x:Name="AwgStatus" Style="{StaticResource DimSel}" Margin="10,0,0,0"/>
                 </DockPanel>
                 <ListView x:Name="AwgList" Style="{StaticResource Grid}" SelectionMode="Extended"
                           MouseDoubleClick="AwgList_DoubleClick">
@@ -246,7 +254,7 @@
                             ToolTip="Снять базу с выделенных (или всех) панелей"/>
                     <Button Content="Версия через терминал…" Click="UpdInstall_Click" Margin="0,0,6,4"
                             ToolTip="Любая версия панели (откат или конкретный релиз): команда уходит в SSH-терминал сервера, QTerm ждёт новую версию"/>
-                    <TextBlock x:Name="UpdStatus" Style="{StaticResource Dim}" Margin="6,0,0,4" TextTrimming="CharacterEllipsis"/>
+                    <TextBox x:Name="UpdStatus" Style="{StaticResource DimSel}" Margin="6,0,0,4"/>
                 </WrapPanel>
                 <ListView x:Name="UpdList" Grid.Row="1" Style="{StaticResource Grid}" SelectionMode="Extended"
                           SelectionChanged="UpdList_SelectionChanged">
@@ -303,7 +311,7 @@
                             <TextBlock Text="Подключи главную панель" FontSize="19" FontWeight="SemiBold"
                                        Foreground="{DynamicResource FgBrush}" VerticalAlignment="Center"/>
                         </DockPanel>
-                        <TextBlock x:Name="SetupResult" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                        <TextBox x:Name="SetupResult" Style="{StaticResource DimSel}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                         <TextBlock TextWrapping="Wrap" Style="{StaticResource Dim}" Margin="0,6,0,0"
                                    Text="Главная — панель 3x-ui, в «Узлы» которой добавлены остальные ноды (у тебя MSK). С неё берутся клиенты, подписки и состояние всех нод."/>
                         <Grid Margin="0,10,0,0">

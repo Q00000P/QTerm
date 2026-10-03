@@ -280,6 +280,8 @@ final class AppState: ObservableObject {
         TerminalLook.install(self)
         // «Ноды 3x-ui»: панели и токены — в secrets вейлта, правка → пуш синка
         XuiCenter.shared.store = XuiStore(store: store, onChange: { [weak self] in self?.syncEngine.schedulePush() })
+        // тексты NSAlert — выделяемые и копируемые
+        SelectableAlerts.install()
     }
 
     // MARK: - Вкладки

@@ -66,7 +66,11 @@ public sealed class XuiStore
 
     private readonly VaultRepo _repo;
 
-    public XuiStore(VaultRepo repo) => _repo = repo;
+    public XuiStore(VaultRepo repo)
+    {
+        _repo = repo;
+        XuiReauth.Store = this;
+    }
 
     private Dictionary<string, string> Secrets => _repo.Data.Secrets ??= new();
 

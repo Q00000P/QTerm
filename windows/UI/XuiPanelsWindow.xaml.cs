@@ -41,6 +41,8 @@ public partial class XuiPanelsWindow : Window
         LoginBox.Text = "";
         UrlBox.Text = "";
         TokenBox.Password = "";
+        PassBox.Password = "";
+        TwoFaBox.Text = "";
         TlsBox.SelectedIndex = 0;
         SshBox.SelectedIndex = 0;
         ResultText.Text = "Новая панель";
@@ -56,10 +58,13 @@ public partial class XuiPanelsWindow : Window
         LoginBox.Text = p.Login;
         UrlBox.Text = p.Url;
         TokenBox.Password = "";
+        PassBox.Password = "";
+        TwoFaBox.Text = "";
         TlsBox.SelectedIndex = p.VerifyTls ? 0 : 1;
         SshBox.SelectedItem = SshBox.Items.OfType<SshItem>().FirstOrDefault(i => i.Id is not null &&
             string.Equals(i.Id, p.Ssh, StringComparison.OrdinalIgnoreCase)) ?? SshBox.Items[0];
         ResultText.Text = p.Token.Length > 0 ? (p.IsAwg ? "Пароль сохранён" : "Токен сохранён") : "Не задано";
+        if (p.IsXui && !string.IsNullOrEmpty(p.Pass)) ResultText.Text += " · пароль админа сохранён — токен перевыпускается сам";
     }
 
     private static int RoleIndex(string role) => role switch { "master" => 0, "awg" => 2, "awg1" => 3, _ => 1 };
@@ -69,7 +74,11 @@ public partial class XuiPanelsWindow : Window
     {
         if (LoginPanel is null) return;
         var i = RoleBox.SelectedIndex;
-        LoginPanel.Visibility = i == 2 ? Visibility.Visible : Visibility.Collapsed;
+        LoginPanel.Visibility = i <= 2 ? Visibility.Visible : Visibility.Collapsed;
+        XuiAuthPanel.Visibility = i <= 1 ? Visibility.Visible : Visibility.Collapsed;
+        LoginCap.Text = i == 2
+            ? "Логин админа awg-panel (2FA должна быть выключена — иначе панель не пускает по API)"
+            : "Логин админа 3x-ui (для выпуска и автоперевыпуска токена)";
         TokenCap.Text = i switch
         {
             2 => "Пароль админа awg-panel. Пусто — оставить сохранённый",
@@ -105,7 +114,7 @@ public partial class XuiPanelsWindow : Window
         Blank();
     }
 
-    private XuiPanel? FromForm()
+    private XuiPanel? FromForm(bool requireToken = true)
     {
         try { PanelUrl.Parse(UrlBox.Text); }
         catch (XuiException ex) { ResultText.Text = ex.Message; return null; }
@@ -113,7 +122,11 @@ public partial class XuiPanelsWindow : Window
         if (token.Length == 0) token = _cur?.Token ?? "";
         var role = RoleOf(RoleBox.SelectedIndex);
         var awg = role == "awg";
-        if (token.Length == 0) { ResultText.Text = role is "awg" or "awg1" ? "Нужен пароль" : "Нужен API-токен"; return null; }
+        if (token.Length == 0 && requireToken)
+        {
+            ResultText.Text = role is "awg" or "awg1" ? "Нужен пароль" : "Нужен API-токен — или логин и пароль → «Выпустить токен по паролю»";
+            return null;
+        }
         if (awg && LoginBox.Text.Trim().Length == 0) { ResultText.Text = "Нужен логин"; return null; }
         var name = NameBox.Text.Trim();
         if (name.Length == 0) name = PanelUrl.Parse(UrlBox.Text).Host.Split('.')[0].ToUpperInvariant();
@@ -122,12 +135,12 @@ public partial class XuiPanelsWindow : Window
             Id = _cur?.Id ?? Guid.NewGuid(),
             Name = name,
             Role = role,
-            Login = awg ? LoginBox.Text.Trim() : role is "master" or "node" ? _cur?.Login ?? "" : "",
+            Login = role == "awg1" ? "" : LoginBox.Text.Trim(),
             Url = UrlBox.Text.Trim(),
             Token = token,
             VerifyTls = TlsBox.SelectedIndex == 0,
             // то, чего нет в форме, — не терять
-            Pass = _cur?.Pass,
+            Pass = role is "master" or "node" ? (PassBox.Password.Length > 0 ? PassBox.Password : _cur?.Pass) : null,
             Clients = _cur?.Clients,
             Ssh = (SshBox.SelectedItem as SshItem)?.Id,
         };
@@ -154,6 +167,30 @@ public partial class XuiPanelsWindow : Window
             ResultText.Text = $"✓ отвечает, 3x-ui {ver}{nodes}";
         }
         catch (XuiException ex) { ResultText.Text = "✗ " + ex.Message; }
+        catch (Exception ex) { ResultText.Text = "✗ " + ex.Message; }
+    }
+
+    private async void Issue_Click(object sender, RoutedEventArgs e)
+    {
+        if (FromForm(requireToken: false) is not { } p) return;
+        if (p.Login.Length == 0 || string.IsNullOrEmpty(p.Pass)) { ResultText.Text = "✗ Нужны логин и пароль админа"; return; }
+        ResultText.Text = "вхожу в панель…";
+        try
+        {
+            var name = $"qterm-{DateTime.Now:yyMMdd-HHmmss}";
+            var code = TwoFaBox.Text.Trim();
+            var r = await XuiLogin.IssueTokenAsync(p.Url, p.Login, p.Pass!, code.Length > 0 ? code : null, p.VerifyTls, name);
+            if (string.IsNullOrEmpty(r.Token))
+            {
+                ResultText.Text = "✗ " + r.Message;
+                if (r.NeedTwoFactor) TwoFaBox.Focus();
+                return;
+            }
+            p.Token = r.Token;
+            _store.SavePanel(p);
+            Reload(p.Id);
+            ResultText.Text = $"✓ токен «{name}» выпущен и сохранён вместе с паролем";
+        }
         catch (Exception ex) { ResultText.Text = "✗ " + ex.Message; }
     }
 

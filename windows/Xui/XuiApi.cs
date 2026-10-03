@@ -105,6 +105,11 @@ public sealed class XuiApi : IDisposable
     };
 
     private readonly HttpClient _http;
+    private string _token;
+    /// <summary>Перевыпуск токена при 401 (сохранённые логин/пароль админа). Один раз на объект API.</summary>
+    public Func<Task<string?>>? Reauth { get; set; }
+    private Task<string?>? _reauthTask;
+    private readonly object _reauthLock = new();
     public string Label { get; }
     public PanelUrl Url { get; }
     public bool VerifyTls { get; }
@@ -117,17 +122,56 @@ public sealed class XuiApi : IDisposable
         var h = new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All };
         if (!verifyTls) h.ServerCertificateCustomValidationCallback = (_, _, _, _) => true;
         _http = new HttpClient(h) { Timeout = TimeSpan.FromSeconds(40) };
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
+        _token = token.Trim();
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
 
-    public static XuiApi For(XuiPanel p) => new(p.Name, p.Url, p.Token, p.VerifyTls);
+    public static XuiApi For(XuiPanel p)
+    {
+        var api = new XuiApi(p.Name, p.Url, p.Token, p.VerifyTls);
+        if (p.IsXui && p.Login.Length > 0 && !string.IsNullOrEmpty(p.Pass))
+        {
+            var id = p.Id;
+            api.Reauth = () => XuiReauth.ReissueAsync(id);
+        }
+        return api;
+    }
+
+    /// <summary>401: токен в QTerm панели неизвестен (удалён/выключен/истёк или панель переустановлена).</summary>
+    public static XuiException Unauthorized(string label) => new(
+        $"{label}: панель не принимает токен (401) — его удалили, выключили, он истёк или панель переустановлена. " +
+        "«Панели и токены…» → панель → логин и пароль админа → «Выпустить токен» (с сохранённым паролем QTerm дальше перевыпускает сам)");
+
+    private AuthenticationHeaderValue Bearer()
+    {
+        lock (_reauthLock) return new AuthenticationHeaderValue("Bearer", _token);
+    }
+
+    /// <summary>Новый токен (один перевыпуск на объект; параллельные запросы ждут тот же).</summary>
+    private async Task<bool> RenewTokenAsync()
+    {
+        if (Reauth is null) return false;
+        Task<string?> task;
+        lock (_reauthLock) task = _reauthTask ??= Reauth();
+        var t = await task;
+        if (string.IsNullOrEmpty(t)) return false;
+        lock (_reauthLock) _token = t;
+        return true;
+    }
 
     public void Dispose() => _http.Dispose();
 
     private async Task<(int Code, byte[] Body)> RawAsync(HttpMethod method, string path, object? body)
     {
+        var r = await RawOnceAsync(method, path, body);
+        if (r.Code == 401 && await RenewTokenAsync()) r = await RawOnceAsync(method, path, body);
+        return r;
+    }
+
+    private async Task<(int Code, byte[] Body)> RawOnceAsync(HttpMethod method, string path, object? body)
+    {
         using var req = new HttpRequestMessage(method, Url.Base + "/panel/api" + path);
+        req.Headers.Authorization = Bearer();
         if (body is not null)
             req.Content = new StringContent(JsonSerializer.Serialize(body, BodyJson), Encoding.UTF8, "application/json");
         try
@@ -154,7 +198,7 @@ public sealed class XuiApi : IDisposable
         var (code, raw) = await RawAsync(method, path, body);
         switch (code)
         {
-            case 401: throw new XuiException($"{Label}: токен не принят (401)");
+            case 401: throw Unauthorized(Label);
             case 403: throw new XuiException($"{Label}: 403 — токену не хватает прав или адрес не совпадает с доменом панели (webDomain)");
             case 404: throw new XuiException($"{Label}: 404 на {path} — проверь базовый путь панели");
         }
@@ -296,6 +340,8 @@ public sealed class XuiApi : IDisposable
     public async Task<byte[]> GetDbAsync()
     {
         var (code, raw) = await RawAsync(HttpMethod.Get, "/server/getDb", null);
+        if (code == 401) throw Unauthorized(Label);
+        if (code == 403) throw new XuiException($"{Label}: токену не хватает прав на скачивание базы (403) — нужен токен с правами admin");
         if (code != 200 || raw.Length < 16 || Encoding.ASCII.GetString(raw, 0, 15) != "SQLite format 3")
             throw new XuiException($"{Label}: не удалось скачать базу (HTTP {code})");
         return raw;
@@ -387,19 +433,29 @@ public sealed class XuiApi : IDisposable
     /// <summary>Загрузить базу в панель (её настройки адресов/сертификатов/узла сохраняются). Панель перезапустится.</summary>
     public async Task ImportDbAsync(byte[] db)
     {
-        using var content = new MultipartFormDataContent();
-        var file = new ByteArrayContent(db);
-        file.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-        content.Add(file, "db", "x-ui.db");
-        using var req = new HttpRequestMessage(HttpMethod.Post, Url.Base + "/panel/api/server/importDB") { Content = content };
-        HttpResponseMessage resp;
-        try { resp = await _http.SendAsync(req); }
-        catch (HttpRequestException ex) { throw new XuiException($"{Label}: нет связи ({ex.InnerException?.Message ?? ex.Message})"); }
-        catch (TaskCanceledException) { throw new XuiException($"{Label}: таймаут"); }
+        async Task<HttpResponseMessage> SendAsync()
+        {
+            var content = new MultipartFormDataContent();
+            var file = new ByteArrayContent(db);
+            file.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            content.Add(file, "db", "x-ui.db");
+            using var req = new HttpRequestMessage(HttpMethod.Post, Url.Base + "/panel/api/server/importDB") { Content = content };
+            req.Headers.Authorization = Bearer();
+            try { return await _http.SendAsync(req); }
+            catch (HttpRequestException ex) { throw new XuiException($"{Label}: нет связи ({ex.InnerException?.Message ?? ex.Message})"); }
+            catch (TaskCanceledException) { throw new XuiException($"{Label}: таймаут"); }
+        }
+        var resp = await SendAsync();
+        if ((int)resp.StatusCode == 401 && await RenewTokenAsync())
+        {
+            resp.Dispose();
+            resp = await SendAsync();
+        }
         using (resp)
         {
             var text = await resp.Content.ReadAsStringAsync();
-            if ((int)resp.StatusCode is 401 or 403) throw new XuiException($"{Label}: нет прав на загрузку базы ({(int)resp.StatusCode})");
+            if ((int)resp.StatusCode == 401) throw Unauthorized(Label);
+            if ((int)resp.StatusCode == 403) throw new XuiException($"{Label}: токену не хватает прав на загрузку базы (403) — нужен токен с правами admin");
             JsonNode? js = null;
             try { js = JsonNode.Parse(text); } catch { }
             if (js?["success"]?.GetValue<bool>() != true)
