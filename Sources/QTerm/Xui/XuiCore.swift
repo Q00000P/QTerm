@@ -7,7 +7,9 @@ import SessionVaultKit
 
 struct XuiError: LocalizedError {
     let message: String
-    init(_ message: String) { self.message = message }
+    /// HTTP-код, если ошибка из-за него (401 — панель не принимает токен).
+    var status = 0
+    init(_ message: String, status: Int = 0) { self.message = message; self.status = status }
     var errorDescription: String? { message }
 }
 

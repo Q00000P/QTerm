@@ -113,7 +113,24 @@ final class XuiAPI {
     /// 401 от панели: токен в QTerm ей неизвестен (удалён/выключен/истёк или панель переустановлена).
     static func unauthorized(_ label: String) -> XuiError {
         XuiError("\(label): панель не принимает токен (401) — его удалили, выключили, он истёк или панель переустановлена. "
-                 + "«Панели и токены…» → панель → логин и пароль админа → «Выпустить токен» (с сохранённым паролем QTerm дальше перевыпускает сам)")
+                 + "«Панели и токены…» → панель → логин и пароль админа → «Выпустить токен» (с сохранённым паролем QTerm дальше перевыпускает сам)",
+                 status: 401)
+    }
+
+    /// Токен перевыпускался (по 401) за время жизни объекта.
+    private(set) var reissued = false
+    var currentToken: String { reauthLock.withLock { token } }
+
+    /// Поставить новый токен (выпущен снаружи, напр. по паролю из диалога).
+    func setToken(_ t: String) {
+        reauthLock.withLock { token = t; reauthTask = nil }
+        reissued = true
+    }
+
+    /// Имена API-токенов на панели (nil — не получилось).
+    func tokenNames() async -> [String]? {
+        guard let arr = try? await get("/setting/apiTokens") as? [Any] else { return nil }
+        return arr.compactMap { ($0 as? JObj).map { J.str($0, "name") } }
     }
 
     /// Новый токен (один перевыпуск на объект; параллельные запросы ждут тот же).
@@ -127,6 +144,7 @@ final class XuiAPI {
         }
         guard let t = await task.value, !t.isEmpty else { return nil }
         reauthLock.withLock { token = t }
+        reissued = true
         return t
     }
 

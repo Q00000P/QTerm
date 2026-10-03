@@ -140,20 +140,98 @@ extension XuiModel {
     private func sleep(_ s: Double) async { try? await Task.sleep(nanoseconds: UInt64(s * 1_000_000_000)) }
 
     /// Ждём, пока панель ответит и покажет нужную версию (или любую, если want == nil).
-    private func waitPanel(_ api: XuiAPI, _ p: XuiPanel, want: String?, seconds: Double, _ what: String) async -> String? {
+    /// Панель поднялась, но токен не принимает (на ней пропали API-токены) — выпускаем новый по паролю.
+    private func waitPanel(_ api: XuiAPI, _ p: XuiPanel, want: String?, seconds: Double, _ what: String) async throws -> String? {
         let t0 = Date()
+        var recovered = false
         while Date().timeIntervalSince(t0) < seconds {
             await sleep(5)
             let secs = Int(Date().timeIntervalSince(t0))
-            if let st = try? await api.status() {
+            do {
+                let st = try await api.status()
                 let v = XuiBackups.norm(J.str(st, "panelVersion"))
                 setState(p, "\(what)… \(secs) с, сейчас v\(v)")
                 if want == nil || v == XuiBackups.norm(want) { return v }
-            } else {
+            } catch let e as XuiError where e.status == 401 {
+                if recovered { throw e }
+                setState(p, "\(what)… панель поднялась, но не принимает токен")
+                log("  ! «\(p.name)»: панель отвечает, но токен QTerm на ней больше не действует (API-токены пропали)", .warn)
+                guard await recoverToken(p, api) else { throw e }
+                recovered = true
+            } catch {
                 setState(p, "\(what)… панель перезапускается")
             }
         }
         return nil
+    }
+
+    // MARK: токены
+
+    /// Перед рискованной операцией: есть пароль админа — токен восстановится сам; нет — спрашиваем и проверяем вход.
+    private func insure(_ p: XuiPanel) async -> XuiPanel {
+        let cur = store.panels().first { $0.id == p.id } ?? p
+        if !cur.login.isEmpty && !(cur.pass ?? "").isEmpty { return cur }
+        var login = cur.login
+        while true {
+            guard let c = XuiDialog.credentials(
+                "Если после операции панель перестанет принимать токен (бывает при обновлении — API-токены пропадают), QTerm войдёт этим логином и паролем, выпустит новый токен, сохранит и покажет. Пароль хранится в вейлте, синком — в зашифрованном виде.",
+                title: "Страховка токена «\(cur.name)»", login: login) else {
+                log("  ! «\(cur.name)»: без пароля — если токен пропадёт, выпустишь его в «Панели и токены…»", .warn)
+                return cur
+            }
+            login = c.login
+            do {
+                let r = try await XuiLogin.issueToken(url: cur.url, login: c.login, password: c.pass,
+                                                      twoFactor: c.twoFa.isEmpty ? nil : c.twoFa, verifyTls: cur.verifyTls, tokenName: nil)
+                if r.ok {
+                    var np = cur
+                    np.login = c.login
+                    np.pass = c.pass
+                    store.save(np)
+                    log("  ✓ «\(cur.name)»: логин и пароль проверены и сохранены", .ok)
+                    return store.panels().first { $0.id == p.id } ?? np
+                }
+                XuiDialog.info("«\(cur.name)»: \(r.message)")
+            } catch {
+                XuiDialog.info("«\(cur.name)»: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Панель не принимает токен: новый — по сохранённому паролю, иначе спросить; сохранить, поставить в api и показать.
+    func recoverToken(_ p: XuiPanel, _ api: XuiAPI) async -> Bool {
+        let cur = store.panels().first { $0.id == p.id } ?? p
+        var token: String?
+        if !cur.login.isEmpty, !(cur.pass ?? "").isEmpty {
+            token = await XuiCenter.shared.reissueToken(cur.id)
+        }
+        var login = cur.login
+        while token == nil {
+            guard let c = XuiDialog.credentials(
+                "Панель «\(cur.name)» не принимает токен QTerm. Войду логином и паролем админа и выпущу новый токен.",
+                title: "Новый токен «\(cur.name)»", login: login) else { return false }
+            login = c.login
+            let r = await XuiCenter.shared.issueAndSave(cur.id, login: c.login, pass: c.pass, twoFa: c.twoFa.isEmpty ? nil : c.twoFa)
+            if let t = r.token { token = t } else { XuiDialog.info("«\(cur.name)»: \(r.message)") }
+        }
+        guard let token else { return false }
+        api.setToken(token)
+        log("  ✓ «\(cur.name)»: новый токен выпущен и сохранён в QTerm", .ok)
+        return true
+    }
+
+    /// После операции: токен перевыпускался — какие токены были и какие остались на панели, показать новый.
+    private func reportTokens(_ p: XuiPanel, _ api: XuiAPI, before: [String]?) async {
+        guard api.reissued else { return }
+        let after = await api.tokenNames() ?? []
+        if let before {
+            let gone = before.filter { !after.contains($0) }
+            log("  · «\(p.name)»: API-токены до: \(before.isEmpty ? "—" : before.joined(separator: ", ")); после: \(after.joined(separator: ", "))"
+                + (gone.isEmpty ? "" : "; пропали: \(gone.joined(separator: ", "))"), .dim)
+        }
+        XuiDialog.secret(
+            "Панель «\(p.name)» перестала принимать старый токен — выпущен новый, он уже сохранён в QTerm. Если этот токен нужен где-то ещё (скрипты, другая главная), скопируй. Держи его в переменной окружения, не в коде.",
+            title: "Новый API-токен «\(p.name)»", value: api.currentToken)
     }
 
     // MARK: самообновление
@@ -169,8 +247,11 @@ extension XuiModel {
             "Каждая: бэкап базы → самообновление панели (update.sh с GitHub) → ждём, пока поднимется с новой версией. " +
             "На первой ошибке останавливаюсь. Откат — внизу, из бэкапа.\n\nСовет: свежий релиз сначала поставь на одну ноду и проверь.",
             title: "Обновление панелей", yes: "Обновить") else { return }
+        // страховка: без пароля админа пропавший после обновления токен сам не восстановить
+        var insured: [XuiPanel] = []
+        for p in order { insured.append(await insure(p)) }
         await updOp("Обновление панелей") {
-            for p in order {
+            for p in insured {
                 edit(p) { $0.busy = true }
                 defer { edit(p) { $0.busy = false } }
                 do {
@@ -184,6 +265,7 @@ extension XuiModel {
                         continue
                     }
                     try await backupOne(api, p)
+                    let tokensBefore = await api.tokenNames()
                     setState(p, "обновляю…")
                     let runId = try await api.startUpdate()
                     log("  … «\(p.name)»: обновление запущено (v\(from))", .dim)
@@ -198,9 +280,10 @@ extension XuiModel {
                         if state == "success" || state == "failed" { break }
                     }
                     if state == "failed" { throw XuiError("апдейтер завершился с ошибкой (журнал: x-ui log на сервере)") }
-                    guard let now = await waitPanel(api, p, want: nil, seconds: 120, "жду панель") else {
+                    guard let now = try await waitPanel(api, p, want: nil, seconds: 120, "жду панель") else {
                         throw XuiError("панель не поднялась за 2 минуты после обновления")
                     }
+                    await reportTokens(p, api, before: tokensBefore)
                     if now == from { throw XuiError("версия не поменялась (v\(now)) — смотри журнал апдейтера на сервере") }
                     edit(p) { $0.version = now; $0.available = false }
                     setState(p, "✓ v\(from) → v\(now)")
@@ -341,26 +424,28 @@ extension XuiModel {
         await installViaTerminal(p, "v" + b.version, restore: b)
     }
 
-    private func installViaTerminal(_ p: XuiPanel, _ tag: String, restore: XuiBackup?) async {
+    private func installViaTerminal(_ target: XuiPanel, _ tag: String, restore: XuiBackup?) async {
         guard let run = runInTerminal else { XuiDialog.info("Терминал QTerm недоступен из этого окна"); return }
-        guard let sess = store.sessionFor(p) else {
-            XuiDialog.info("Для «\(p.name)» не найдена SSH-сессия QTerm (ни по адресу, ни по IP). Привяжи её в «Панели и токены…» → «SSH-сессия».")
+        guard let sess = store.sessionFor(target) else {
+            XuiDialog.info("Для «\(target.name)» не найдена SSH-сессия QTerm (ни по адресу, ни по IP). Привяжи её в «Панели и токены…» → «SSH-сессия».")
             return
         }
         let cmd = Self.installCommand(tag, user: sess.username)
+        let p = await insure(target)
         await updOp("«\(p.name)» → \(tag)\(restore == nil ? "" : " + база из бэкапа")") {
             edit(p) { $0.busy = true }
             defer { edit(p) { $0.busy = false } }
             do {
                 let api = try XuiAPI.forPanel(p)
                 try await backupOne(api, p)
+                let tokensBefore = await api.tokenNames()
                 setState(p, "команда отправлена в терминал «\(sess.name)»")
                 guard await run(sess.id, cmd) else {
                     XuiDialog.copy(cmd)
                     throw XuiError("не удалось открыть терминал «\(sess.name)» — команда в буфере, вставь её сам")
                 }
                 log("  … в терминале «\(sess.name)»: \(cmd)", .dim)
-                guard let v = await waitPanel(api, p, want: tag, seconds: 600, "жду v\(XuiBackups.norm(tag))") else {
+                guard let v = try await waitPanel(api, p, want: tag, seconds: 600, "жду v\(XuiBackups.norm(tag))") else {
                     throw XuiError("за 10 минут панель не показала v\(XuiBackups.norm(tag)) — смотри терминал")
                 }
                 edit(p) { $0.version = v }
@@ -368,11 +453,12 @@ extension XuiModel {
                 if let r = restore {
                     setState(p, "загружаю базу из бэкапа…")
                     try await api.importDb(Data(contentsOf: URL(fileURLWithPath: r.path)))
-                    guard await waitPanel(api, p, want: nil, seconds: 90, "панель перезапускается с базой") != nil else {
+                    guard try await waitPanel(api, p, want: nil, seconds: 90, "панель перезапускается с базой") != nil else {
                         throw XuiError("после загрузки базы панель не ответила за 90 с")
                     }
                     log("  ✓ «\(p.name)»: база из \(r.fileName) на месте", .ok)
                 }
+                await reportTokens(p, api, before: tokensBefore)
                 setState(p, "✓ v\(v)\(restore == nil ? "" : " + база из бэкапа")")
             } catch {
                 setState(p, "✗ " + error.localizedDescription, error: true)
@@ -395,8 +481,8 @@ extension XuiModel {
 
     func restoreBackup() async {
         guard let b = bakRows.first(where: { $0.id == bakSel }) else { XuiDialog.info("Выбери бэкап в списке снизу"); return }
-        guard let p = panelForBackup(b) else { return }
-        let cur = updInfo[p.id]?.version ?? ""
+        guard let found = panelForBackup(b) else { return }
+        let cur = updInfo[found.id]?.version ?? ""
         var warn = ""
         if !b.version.isEmpty && !cur.isEmpty && b.version != cur {
             warn = XuiBackups.compare(b.version, cur) < 0
@@ -405,8 +491,9 @@ extension XuiModel {
         }
         let f = DateFormatter(); f.dateFormat = "dd.MM.yyyy HH:mm"
         guard XuiDialog.confirm(
-            "Загрузить в «\(p.name)» базу из \(b.fileName) (\(f.string(from: b.time)))?\nПеред этим сниму бэкап текущей базы. Адреса, сертификаты и привязка узла этой машины сохраняются; панель перезапустится." + warn,
+            "Загрузить в «\(found.name)» базу из \(b.fileName) (\(f.string(from: b.time)))?\nПеред этим сниму бэкап текущей базы. Адреса, сертификаты и привязка узла этой машины сохраняются; панель перезапустится." + warn,
             title: "Восстановление базы", yes: "Восстановить") else { return }
+        let p = await insure(found)
         await updOp("Восстановление базы «\(p.name)»") {
             edit(p) { $0.busy = true }
             defer { edit(p) { $0.busy = false } }
@@ -415,9 +502,10 @@ extension XuiModel {
                 try await backupOne(api, p)
                 setState(p, "загружаю базу…")
                 try await api.importDb(Data(contentsOf: URL(fileURLWithPath: b.path)))
-                guard await waitPanel(api, p, want: nil, seconds: 90, "панель перезапускается") != nil else {
+                guard try await waitPanel(api, p, want: nil, seconds: 90, "панель перезапускается") != nil else {
                     throw XuiError("после загрузки базы панель не ответила за 90 с")
                 }
+                await reportTokens(p, api, before: nil)
                 setState(p, "✓ база от \(f.string(from: b.time)) на месте")
                 log("  ✓ «\(p.name)»: база из \(b.fileName) загружена", .ok)
             } catch {

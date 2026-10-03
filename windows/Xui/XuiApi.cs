@@ -12,7 +12,9 @@ namespace QTermWin.Xui;
 
 public sealed class XuiException : Exception
 {
-    public XuiException(string message) : base(message) { }
+    /// <summary>HTTP-код, если ошибка из-за него (401 — панель не принимает токен).</summary>
+    public int Status { get; }
+    public XuiException(string message, int status = 0) : base(message) { Status = status; }
 }
 
 /// <summary>Адрес панели как в браузере → схема/хост/порт/базовый путь (без /panel/…).</summary>
@@ -140,7 +142,30 @@ public sealed class XuiApi : IDisposable
     /// <summary>401: токен в QTerm панели неизвестен (удалён/выключен/истёк или панель переустановлена).</summary>
     public static XuiException Unauthorized(string label) => new(
         $"{label}: панель не принимает токен (401) — его удалили, выключили, он истёк или панель переустановлена. " +
-        "«Панели и токены…» → панель → логин и пароль админа → «Выпустить токен» (с сохранённым паролем QTerm дальше перевыпускает сам)");
+        "«Панели и токены…» → панель → логин и пароль админа → «Выпустить токен» (с сохранённым паролем QTerm дальше перевыпускает сам)", 401);
+
+    /// <summary>Токен перевыпускался (по 401) за время жизни объекта.</summary>
+    public bool Reissued { get; private set; }
+
+    public string CurrentToken { get { lock (_reauthLock) return _token; } }
+
+    /// <summary>Поставить новый токен (выпущен снаружи, напр. по паролю из диалога).</summary>
+    public void SetToken(string token)
+    {
+        lock (_reauthLock) { _token = token; _reauthTask = null; }
+        Reissued = true;
+    }
+
+    /// <summary>Имена API-токенов на панели (null — не получилось).</summary>
+    public async Task<List<string>?> TokenNamesAsync()
+    {
+        try
+        {
+            if (await GetAsync("/setting/apiTokens") is not JsonArray arr) return null;
+            return arr.OfType<JsonObject>().Select(o => o["name"]?.ToString() ?? "").ToList();
+        }
+        catch (XuiException) { return null; }
+    }
 
     private AuthenticationHeaderValue Bearer()
     {
@@ -156,6 +181,7 @@ public sealed class XuiApi : IDisposable
         var t = await task;
         if (string.IsNullOrEmpty(t)) return false;
         lock (_reauthLock) _token = t;
+        Reissued = true;
         return true;
     }
 

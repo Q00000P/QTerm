@@ -159,10 +159,14 @@ public partial class XuiWindow
         return path;
     }
 
-    /// <summary>Ждём, пока панель ответит и покажет нужную версию (или любую, если want пусто).</summary>
+    /// <summary>
+    /// Ждём, пока панель ответит и покажет нужную версию (или любую, если want пусто).
+    /// Панель поднялась, но токен не принимает (на ней пропали API-токены) — выпускаем новый по паролю.
+    /// </summary>
     private async Task<string?> WaitPanel(XuiApi api, XuiPanel p, string? want, int seconds, string what)
     {
         var t0 = DateTime.UtcNow;
+        var recovered = false;
         while ((DateTime.UtcNow - t0).TotalSeconds < seconds)
         {
             await Task.Delay(5000);
@@ -172,9 +176,97 @@ public partial class XuiWindow
                 SetState(p, $"{what}… {(int)(DateTime.UtcNow - t0).TotalSeconds} с, сейчас v{v}");
                 if (want is null || v == XuiBackups.Norm(want)) return v;
             }
+            catch (XuiException ex) when (ex.Status == 401)
+            {
+                if (recovered) throw;
+                SetState(p, $"{what}… панель поднялась, но не принимает токен");
+                Log($"  ! «{p.Name}»: панель отвечает, но токен QTerm на ней больше не действует (API-токены пропали)", LogKind.Warn);
+                if (!await RecoverToken(p, api)) throw;
+                recovered = true;
+            }
             catch (XuiException) { SetState(p, $"{what}… панель перезапускается"); }
         }
         return null;
+    }
+
+    // ── токены ──
+
+    private XuiPanel Fresh(XuiPanel p) => _store.Panels().FirstOrDefault(x => x.Id == p.Id) ?? p;
+
+    /// <summary>Перед рискованной операцией: есть пароль админа — токен восстановится сам; нет — спрашиваем и проверяем вход.</summary>
+    private async Task<XuiPanel> Insure(XuiPanel p)
+    {
+        var cur = Fresh(p);
+        if (cur.Login.Length > 0 && !string.IsNullOrEmpty(cur.Pass)) return cur;
+        var login = cur.Login;
+        while (true)
+        {
+            var c = XuiDialog.Credentials(this,
+                "Если после операции панель перестанет принимать токен (бывает при обновлении — API-токены пропадают), QTerm войдёт этим логином и паролем, " +
+                "выпустит новый токен, сохранит и покажет. Пароль хранится в вейлте (DPAPI), синком — в зашифрованном виде.",
+                $"Страховка токена «{cur.Name}»", login);
+            if (c is null)
+            {
+                Log($"  ! «{cur.Name}»: без пароля — если токен пропадёт, выпустишь его в «Панели и токены…»", LogKind.Warn);
+                return cur;
+            }
+            login = c.Value.Login;
+            try
+            {
+                var r = await XuiLogin.IssueTokenAsync(cur.Url, c.Value.Login, c.Value.Pass,
+                    c.Value.TwoFa.Length > 0 ? c.Value.TwoFa : null, cur.VerifyTls, tokenName: null);
+                if (r.Ok)
+                {
+                    cur.Login = c.Value.Login;
+                    cur.Pass = c.Value.Pass;
+                    _store.SavePanel(cur);
+                    Log($"  ✓ «{cur.Name}»: логин и пароль проверены и сохранены", LogKind.Ok);
+                    return Fresh(cur);
+                }
+                XuiDialog.Info(this, $"«{cur.Name}»: {r.Message}");
+            }
+            catch (Exception ex) { XuiDialog.Info(this, $"«{cur.Name}»: {ex.Message}"); }
+        }
+    }
+
+    /// <summary>Панель не принимает токен: новый — по сохранённому паролю, иначе спросить; сохранить, поставить в api.</summary>
+    private async Task<bool> RecoverToken(XuiPanel p, XuiApi api)
+    {
+        var cur = Fresh(p);
+        string? token = null;
+        if (cur.Login.Length > 0 && !string.IsNullOrEmpty(cur.Pass)) token = await XuiReauth.ReissueAsync(cur.Id);
+        var login = cur.Login;
+        while (token is null)
+        {
+            var c = XuiDialog.Credentials(this,
+                $"Панель «{cur.Name}» не принимает токен QTerm. Войду логином и паролем админа и выпущу новый токен.",
+                $"Новый токен «{cur.Name}»", login);
+            if (c is null) return false;
+            login = c.Value.Login;
+            var r = await XuiReauth.IssueAndSaveAsync(cur.Id, c.Value.Login, c.Value.Pass, c.Value.TwoFa.Length > 0 ? c.Value.TwoFa : null);
+            if (r.Token is not null) token = r.Token;
+            else XuiDialog.Info(this, $"«{cur.Name}»: {r.Message}");
+        }
+        api.SetToken(token);
+        Log($"  ✓ «{cur.Name}»: новый токен выпущен и сохранён в QTerm", LogKind.Ok);
+        return true;
+    }
+
+    /// <summary>После операции: токен перевыпускался — какие токены были и какие остались на панели, показать новый.</summary>
+    private async Task ReportTokens(XuiPanel p, XuiApi api, List<string>? before)
+    {
+        if (!api.Reissued) return;
+        var after = await api.TokenNamesAsync() ?? new List<string>();
+        if (before is not null)
+        {
+            var gone = before.Where(n => !after.Contains(n)).ToList();
+            Log($"  · «{p.Name}»: API-токены до: {(before.Count == 0 ? "—" : string.Join(", ", before))}; после: {string.Join(", ", after)}" +
+                (gone.Count == 0 ? "" : "; пропали: " + string.Join(", ", gone)), LogKind.Dim);
+        }
+        XuiDialog.Secret(this,
+            $"Панель «{p.Name}» перестала принимать старый токен — выпущен новый, он уже сохранён в QTerm. " +
+            "Если этот токен нужен где-то ещё (скрипты, другая главная), скопируй. Держи его в переменной окружения, не в коде.",
+            $"Новый API-токен «{p.Name}»", api.CurrentToken);
     }
 
     // ── самообновление ──
@@ -192,9 +284,12 @@ public partial class XuiWindow
                 "На первой ошибке останавливаюсь. Откат — внизу, из бэкапа.\n\n" +
                 "Совет: свежий релиз сначала поставь на одну ноду и проверь.",
                 "Обновление панелей", "Обновить")) return;
+        // страховка: без пароля админа пропавший после обновления токен сам не восстановить
+        var insured = new List<XuiPanel>();
+        foreach (var p in order) insured.Add(await Insure(p));
         await UpdOp("Обновление панелей", async () =>
         {
-            foreach (var p in order)
+            foreach (var p in insured)
             {
                 var i = Info(p);
                 i.Busy = true;
@@ -212,6 +307,7 @@ public partial class XuiWindow
                         continue;
                     }
                     await BackupOne(api, p);
+                    var tokensBefore = await api.TokenNamesAsync();
                     SetState(p, "обновляю…");
                     var runId = await api.StartUpdateAsync();
                     Log($"  … «{p.Name}»: обновление запущено (v{from})", LogKind.Dim);
@@ -233,6 +329,7 @@ public partial class XuiWindow
                     if (state == "failed") throw new XuiException("апдейтер завершился с ошибкой (журнал: x-ui log на сервере)");
                     var now = await WaitPanel(api, p, null, 120, "жду панель");
                     if (now is null) throw new XuiException("панель не поднялась за 2 минуты после обновления");
+                    await ReportTokens(p, api, tokensBefore);
                     if (now == from) throw new XuiException($"версия не поменялась (v{now}) — смотри журнал апдейтера на сервере");
                     i.Version = now;
                     i.Available = false;
@@ -395,8 +492,9 @@ public partial class XuiWindow
         await InstallViaTerminal(p, "v" + r.B.Version, r.B);
     }
 
-    private async Task InstallViaTerminal(XuiPanel p, string tag, XuiBackup? restore)
+    private async Task InstallViaTerminal(XuiPanel target, string tag, XuiBackup? restore)
     {
+        var p = target;
         if (RunInTerminal is null) { XuiDialog.Info(this, "Терминал QTerm недоступен из этого окна"); return; }
         var sess = _store.SessionFor(p);
         if (sess is null)
@@ -404,6 +502,7 @@ public partial class XuiWindow
             XuiDialog.Info(this, $"Для «{p.Name}» не найдена SSH-сессия QTerm (ни по адресу, ни по IP). Привяжи её в «Панели и токены…» → «SSH-сессия».");
             return;
         }
+        p = await Insure(p);
         await UpdOp($"«{p.Name}» → {tag}{(restore is null ? "" : " + база из бэкапа")}", async () =>
         {
             var i = Info(p);
@@ -412,6 +511,7 @@ public partial class XuiWindow
             {
                 using var api = XuiApi.For(p);
                 await BackupOne(api, p);
+                var tokensBefore = await api.TokenNamesAsync();
                 var cmd = InstallCommand(tag, sess.Username);
                 SetState(p, $"команда отправлена в терминал «{sess.Name}»");
                 if (!await RunInTerminal(sess.Id, cmd)) throw new XuiException($"не удалось открыть терминал «{sess.Name}» — команда в буфере, вставь её сама");
@@ -428,6 +528,7 @@ public partial class XuiWindow
                     if (back is null) throw new XuiException("после загрузки базы панель не ответила за 90 с");
                     Log($"  ✓ «{p.Name}»: база из {restore.FileName} на месте", LogKind.Ok);
                 }
+                await ReportTokens(p, api, tokensBefore);
                 SetState(p, $"✓ v{v}{(restore is null ? "" : " + база от " + restore.Time.ToString("dd.MM HH:mm"))}");
             }
             catch (Exception ex)
@@ -456,8 +557,9 @@ public partial class XuiWindow
     private async void BakRestore_Click(object sender, RoutedEventArgs e)
     {
         if (BakList.SelectedItem is not BakRow r) { XuiDialog.Info(this, "Выбери бэкап в списке снизу"); return; }
-        var p = PanelForBackup(r.B);
-        if (p is null) return;
+        var found = PanelForBackup(r.B);
+        if (found is null) return;
+        var p = found;
         var cur = Info(p).Version;
         var warn = r.B.Version.Length > 0 && cur.Length > 0 && r.B.Version != cur
             ? (XuiBackups.Compare(r.B.Version, cur) < 0
@@ -468,6 +570,7 @@ public partial class XuiWindow
                 $"Загрузить в «{p.Name}» базу из {r.B.FileName} ({r.B.Time:dd.MM.yyyy HH:mm})?\n" +
                 "Перед этим сниму бэкап текущей базы. Адреса, сертификаты и привязка узла этой машины сохраняются; панель перезапустится." + warn,
                 "Восстановление базы", "Восстановить")) return;
+        p = await Insure(p);
         await UpdOp($"Восстановление базы «{p.Name}»", async () =>
         {
             var i = Info(p);
@@ -480,6 +583,7 @@ public partial class XuiWindow
                 await api.ImportDbAsync(await File.ReadAllBytesAsync(r.B.Path));
                 var back = await WaitPanel(api, p, null, 90, "панель перезапускается");
                 if (back is null) throw new XuiException("после загрузки базы панель не ответила за 90 с");
+                await ReportTokens(p, api, null);
                 SetState(p, $"✓ база от {r.B.Time:dd.MM HH:mm} на месте");
                 Log($"  ✓ «{p.Name}»: база из {r.B.FileName} загружена", LogKind.Ok);
             }
