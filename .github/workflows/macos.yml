@@ -19,15 +19,31 @@ jobs:
 
       - name: Swift
         run: |
+          ls -d /Applications/Xcode*.app
+          LATEST=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$LATEST"
           xcodebuild -version
           swift --version
+          echo "::notice::$(xcodebuild -version | tr '\n' ' ') · $(swift --version 2>&1 | head -1)"
 
       - name: Зависимости (setup-deps.sh)
         run: ./QTerm/setup-deps.sh
 
       - name: Сборка (make-app.sh)
         working-directory: QTerm
-        run: ./make-app.sh
+        run: |
+          set +e
+          ./make-app.sh > build.log 2>&1
+          status=$?
+          tail -n 40 build.log
+          # ошибки компилятора — в аннотации (их видно через API без скачивания логов)
+          grep -E "error:|fatal error|Fatal error" build.log | sort -u | head -n 40 | while IFS= read -r l; do
+            echo "::error::${l:0:900}"
+          done
+          if [ $status -ne 0 ]; then
+            tail -n 15 build.log | while IFS= read -r l; do echo "::warning::${l:0:900}"; done
+          fi
+          exit $status
 
       - name: Упаковка
         id: pack
