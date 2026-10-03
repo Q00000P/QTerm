@@ -1,0 +1,43 @@
+name: macos
+
+# Мак-версия: проверка сборки на каждый пуш (swift build + make-app.sh) и QTerm.app в артефакты.
+# Подпись в CI — ad-hoc: для ежедневной работы собирай у себя ./make-app.sh (серт «QTerm Self-Signed»),
+# иначе Keychain/Touch ID вейлта не узнают приложение.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['windows/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: QTerm
+
+      - name: Swift
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Зависимости (setup-deps.sh)
+        run: ./QTerm/setup-deps.sh
+
+      - name: Сборка (make-app.sh)
+        working-directory: QTerm
+        run: ./make-app.sh
+
+      - name: Упаковка
+        id: pack
+        working-directory: QTerm
+        run: |
+          VER=$(grep -m1 '^APP_VERSION=' make-app.sh | cut -d'"' -f2)
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          ditto -c -k --keepParent build/QTerm.app "QTerm-$VER-macos-arm64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QTerm-${{ steps.pack.outputs.version }}-macos-arm64
+          path: QTerm/QTerm-${{ steps.pack.outputs.version }}-macos-arm64.zip
