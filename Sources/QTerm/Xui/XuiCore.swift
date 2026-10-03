@@ -137,6 +137,9 @@ struct XInbound: Identifiable {
     var nodeId: Int?
     var enable = true
     var clientEmails: [String] = []
+    /// Что привязывает инбаунд к своему серверу: TLS-SNI и пути сертификатов, Reality с локальным сайтом (127.0.0.1)
+    /// и его SNI. Такой инбаунд на другом сервере не заработает. Reality на чужой донор переносится свободно.
+    var hostBound: [String] = []
 
     var multiUser: Bool { ["vless", "vmess", "trojan", "shadowsocks", "hysteria", "tuic"].contains(proto) }
     var isHys: Bool { proto == "hysteria" }

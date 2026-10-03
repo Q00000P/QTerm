@@ -241,8 +241,33 @@ final class XuiAPI {
             if let st = settings as? JObj, let cl = st["clients"] as? [Any] {
                 ib.clientEmails = cl.compactMap { ($0 as? JObj)?["email"] as? String }
             }
+            ib.hostBound = Self.hostBound(o["streamSettings"])
             return ib
         }
+    }
+
+    static func hostBound(_ raw: Any?) -> [String] {
+        var ss = raw
+        if let s = ss as? String, !s.isEmpty { ss = J.parse(Data(s.utf8)) }
+        guard let st = ss as? JObj else { return [] }
+        var out: [String] = []
+        if let t = st["tlsSettings"] as? JObj {
+            let sn = J.str(t, "serverName")
+            if !sn.isEmpty { out.append("SNI \(sn)") }
+            for c in (t["certificates"] as? [Any]) ?? [] {
+                if let c = c as? JObj { let f = J.str(c, "certificateFile"); if !f.isEmpty { out.append("серт \(f)") } }
+            }
+        }
+        if let r = st["realitySettings"] as? JObj {
+            let target = J.str(r, "target").isEmpty ? J.str(r, "dest") : J.str(r, "target")
+            let local = target.hasPrefix("127.") || target.hasPrefix("localhost") || target.hasPrefix("[::1]")
+                || target.hasPrefix("/") || Int(target) != nil
+            if local {
+                out.append("Reality → \(target)")
+                for n in (r["serverNames"] as? [Any]) ?? [] { if let n = n as? String, !n.isEmpty { out.append("SNI \(n)") } }
+            }
+        }
+        return out
     }
 
     func nodes() async throws -> [XNode] {

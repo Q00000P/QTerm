@@ -75,6 +75,11 @@ public sealed class XInbound
     public int? NodeId;
     public bool Enable = true;
     public List<string> ClientEmails = new();
+    /// <summary>
+    /// Что привязывает инбаунд к своему серверу: TLS-SNI и пути сертификатов, Reality с локальным сайтом (127.0.0.1)
+    /// и его SNI. Такой инбаунд на другом сервере не заработает. Reality на чужой донор переносится свободно.
+    /// </summary>
+    public List<string> HostBound = new();
 
     public bool MultiUser => Protocol is "vless" or "vmess" or "trojan" or "shadowsocks" or "hysteria" or "tuic";
     public bool IsHys => Protocol == "hysteria";
@@ -308,6 +313,43 @@ public sealed class XuiApi : IDisposable
         return list;
     }
 
+    public static List<string> HostBound(JsonNode? raw)
+    {
+        var ss = raw;
+        if (ss is JsonValue v && v.TryGetValue<string>(out var s) && s.Length > 0)
+        {
+            try { ss = JsonNode.Parse(s); } catch { ss = null; }
+        }
+        var outList = new List<string>();
+        if (ss is not JsonObject st) return outList;
+        if (st["tlsSettings"] is JsonObject t)
+        {
+            var sn = J.Str(t, "serverName");
+            if (sn.Length > 0) outList.Add($"SNI {sn}");
+            if (t["certificates"] is JsonArray certs)
+                foreach (var c in certs.OfType<JsonObject>())
+                {
+                    var f = J.Str(c, "certificateFile");
+                    if (f.Length > 0) outList.Add($"серт {f}");
+                }
+        }
+        if (st["realitySettings"] is JsonObject r)
+        {
+            var target = J.Str(r, "target");
+            if (target.Length == 0) target = J.Str(r, "dest");
+            var local = target.StartsWith("127.") || target.StartsWith("localhost") || target.StartsWith("[::1]")
+                        || target.StartsWith('/') || int.TryParse(target, out _);
+            if (local)
+            {
+                outList.Add($"Reality → {target}");
+                if (r["serverNames"] is JsonArray names)
+                    foreach (var n in names)
+                        if (n is JsonValue nv && nv.TryGetValue<string>(out var name) && name.Length > 0) outList.Add($"SNI {name}");
+            }
+        }
+        return outList;
+    }
+
     public async Task<List<XInbound>> InboundsAsync()
     {
         var arr = await GetAsync("/inbounds/list") as JsonArray ?? new JsonArray();
@@ -333,6 +375,7 @@ public sealed class XuiApi : IDisposable
             if (settings?["clients"] is JsonArray cl)
                 foreach (var c in cl)
                     if (c?["email"] is JsonValue ev && ev.TryGetValue<string>(out var em)) ib.ClientEmails.Add(em);
+            ib.HostBound = HostBound(o["streamSettings"]);
             list.Add(ib);
         }
         return list;

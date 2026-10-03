@@ -328,6 +328,21 @@ final class NodeAddModel: ObservableObject {
             guard let hit = nodes.first(where: { oldUrl?.sameAs($0.address, $0.port, $0.basePath) ?? false })
                 ?? nodes.first(where: { $0.name.caseInsensitiveCompare(old.name) == .orderedSame }) else { continue }
 
+            // Перепривязка = главная зальёт на новый сервер инбаунды узла как есть (SNI, пути сертификатов,
+            // Reality на локальный сайт) и снесёт инбаунды установщика. Годится только для переустановки
+            // на том же сервере с теми же доменами. Другой сервер — отдельным узлом.
+            let need = Set(try await master.inbounds().filter { $0.nodeId == hit.id }.flatMap(\.hostBound))
+            let have = Set(((try? await XuiAPI.forPanel(neu).inbounds()) ?? []).flatMap(\.hostBound))
+            let missing = need.subtracting(have).sorted()
+            if !missing.isEmpty {
+                log("✗ узел «\(hit.name)» на главной «\(m.name)» НЕ перепривязан: его инбаунды завязаны на домены и сертификаты прежнего сервера (\(hit.address)), а на новом их нет:")
+                for x in missing { log("    \(x)") }
+                log("  Перепривязка залила бы их на новый сервер и снесла его собственные — отсюда чужой SNI и слетевшие серты.")
+                log("  Новый сервер подключаю к главной отдельным узлом, со своими инбаундами. Старый узел «\(hit.name)» удали во «Узлах», когда проверишь новый (имена в подписке совпадут — до удаления будут дубли).")
+                connectId = neu.id
+                return
+            }
+
             let f = DateFormatter(); f.dateFormat = "yyyyMMddHHmmss"
             let tname = "qterm-master-\(f.string(from: Date()))"
             var sync: String?
@@ -489,7 +504,7 @@ struct NodeAddSheet: View {
             Toggle("Проверять сертификат", isOn: $m.verify)
             if m.showRebind {
                 Toggle(isOn: $m.rebind) {
-                    Text("Перепривязать узел на главной (\(m.masters.map(\.name).joined(separator: ", "))): новый адрес и токен node-sync. Главная сама зальёт на ноду свои инбаунды и клиентов (те же UUID и ключи Reality — у клиентов ничего не меняется); инбаунды, созданные установщиком, она заменит.")
+                    Text("Перепривязать узел на главной (\(m.masters.map(\.name).joined(separator: ", "))): новый адрес и токен node-sync. Главная сама зальёт на ноду свои инбаунды и клиентов (те же UUID и ключи Reality — у клиентов ничего не меняется); инбаунды, созданные установщиком, она заменит. Только для переустановки на том же сервере с теми же доменами: если у инбаундов узла SNI/сертификаты, которых на новом сервере нет, — не перепривяжу, а подключу новый сервер отдельным узлом.")
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

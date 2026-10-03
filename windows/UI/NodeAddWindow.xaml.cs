@@ -241,7 +241,7 @@ public partial class NodeAddWindow : Window
         RebindText.Text = rebind
             ? $"Перепривязать узел на главной ({string.Join(", ", masters.Select(m => m.Name))}): новый адрес и токен node-sync. " +
               "Главная сама зальёт на ноду свои инбаунды и клиентов (те же UUID и ключи Reality — у клиентов ничего не меняется); " +
-              "инбаунды, созданные установщиком, она заменит."
+              "инбаунды, созданные установщиком, она заменит. Только для переустановки на том же сервере с теми же доменами: если у инбаундов узла SNI/сертификаты, которых на новом сервере нет, — не перепривяжу, а подключу новый сервер отдельным узлом."
             : "";
 
         // 3x-ui · новая нода → подключить к главной
@@ -434,6 +434,26 @@ public partial class NodeAddWindow : Window
             var hit = nodes.FirstOrDefault(n => oldUrl is not null && oldUrl.SameAs(n.Address, n.Port, n.BasePath))
                       ?? nodes.FirstOrDefault(n => string.Equals(n.Name, old.Name, StringComparison.OrdinalIgnoreCase));
             if (hit is null) continue;
+
+            // Перепривязка = главная зальёт на новый сервер инбаунды узла как есть (SNI, пути сертификатов,
+            // Reality на локальный сайт) и снесёт инбаунды установщика. Годится только для переустановки
+            // на том же сервере с теми же доменами. Другой сервер — отдельным узлом.
+            var need = (await master.InboundsAsync()).Where(i => i.NodeId == hit.Id).SelectMany(i => i.HostBound).ToHashSet();
+            var have = new HashSet<string>();
+            using (var probe = XuiApi.For(neu))
+            {
+                try { have = (await probe.InboundsAsync()).SelectMany(i => i.HostBound).ToHashSet(); } catch (XuiException) { }
+            }
+            var missing = need.Where(x => !have.Contains(x)).OrderBy(x => x).ToList();
+            if (missing.Count > 0)
+            {
+                Log($"✗ узел «{hit.Name}» на главной «{m.Name}» НЕ перепривязан: его инбаунды завязаны на домены и сертификаты прежнего сервера ({hit.Address}), а на новом их нет:");
+                foreach (var x in missing) Log("    " + x);
+                Log("  Перепривязка залила бы их на новый сервер и снесла его собственные — отсюда чужой SNI и слетевшие серты.");
+                Log($"  Новый сервер подключаю к главной отдельным узлом, со своими инбаундами. Старый узел «{hit.Name}» удали во «Узлах», когда проверишь новый (имена в подписке совпадут — до удаления будут дубли).");
+                ConnectId = neu.Id;
+                return;
+            }
 
             string? sync = null;
             var tname = $"qterm-master-{DateTime.Now:yyyyMMddHHmmss}";
