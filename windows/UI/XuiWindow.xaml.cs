@@ -143,7 +143,7 @@ public partial class XuiWindow : Window
         var pick = masters.FirstOrDefault(p => p.Id == (_masterPanel?.Id ?? _lastMaster)) ?? masters.FirstOrDefault();
         MasterBox.SelectedItem = pick;
         _noMaster = masters.Count == 0;
-        SetupView.Visibility = _noMaster && _seg != "awg" ? Visibility.Visible : Visibility.Collapsed;
+        SetupView.Visibility = _noMaster && _seg is not ("awg" or "updates") ? Visibility.Visible : Visibility.Collapsed;
         if (masters.Count == 0)
         {
             Status("Нет главной панели");
@@ -250,11 +250,13 @@ public partial class XuiWindow : Window
         NodesView.Visibility = s == "nodes" ? Visibility.Visible : Visibility.Collapsed;
         NamesView.Visibility = s == "names" ? Visibility.Visible : Visibility.Collapsed;
         AwgView.Visibility = s == "awg" ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var b in new[] { SegMonitor, SegClients, SegNodes, SegNames, SegAwg })
+        UpdatesView.Visibility = s == "updates" ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var b in new[] { SegMonitor, SegClients, SegNodes, SegNames, SegAwg, SegUpdates })
             b.SetResourceReference(BackgroundProperty, (string)b.Tag == s ? "SelBrush" : "Panel2Brush");
-        // AWG живёт без главной 3x-ui — карточку первой настройки там не показываем
-        SetupView.Visibility = _noMaster && s != "awg" ? Visibility.Visible : Visibility.Collapsed;
+        // AWG и обновления живут без главной 3x-ui — карточку первой настройки там не показываем
+        SetupView.Visibility = _noMaster && s is not ("awg" or "updates") ? Visibility.Visible : Visibility.Collapsed;
         if (s == "awg" && IsLoaded) _ = RefreshAwgAsync();
+        if (s == "updates" && IsLoaded) _ = RefreshUpdatesAsync();
     }
 
     // ── форматирование ──
@@ -953,7 +955,7 @@ public partial class XuiWindow : Window
                 items, resultHeader: "Клиент (станет)", fromHeader: "Записи / куда добавить") { Owner = this };
             if (dlg.ShowDialog() != true) { Log("  остановлено", LogKind.Warn); return; }
 
-            Log("  ✓ бэкап главной → " + await ops.BackupAsync(_master, "master"), LogKind.Ok);
+            Log("  ✓ бэкап главной → " + await ops.BackupAsync(_master), LogKind.Ok);
             var approvedMerge = items.Where(i => i.Kind == "merge" && i.Apply).Select(i => i.Key).ToHashSet(StringComparer.Ordinal);
             if (approvedMerge.Count > 0)
             {
@@ -1028,7 +1030,7 @@ public partial class XuiWindow : Window
             var approved = items.Where(i => i.Owner is null && i.Apply).Select(i => i.Key).ToHashSet(StringComparer.Ordinal);
             if (approved.Count > 0)
             {
-                Log("  ✓ бэкап главной → " + await ops.BackupAsync(_master, "master"), LogKind.Ok);
+                Log("  ✓ бэкап главной → " + await ops.BackupAsync(_master), LogKind.Ok);
                 // пересчёт: между анализом и применением могло поменяться; делаем только отмеченное
                 var fresh = ops.PlanMerge(await _master.ClientsAsync(), await _master.InboundsAsync(), await _master.NodesAsync())
                     .Where(m => approved.Contains(m.Key)).ToList();

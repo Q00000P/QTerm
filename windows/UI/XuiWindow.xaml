@@ -65,6 +65,8 @@
             <Button x:Name="SegNames" Style="{StaticResource Seg}" Content="Ревизия имён" Tag="names" Click="Seg_Click"/>
             <Button x:Name="SegAwg" Style="{StaticResource Seg}" Content="AWG" Tag="awg" Click="Seg_Click"
                     ToolTip="Клиенты awg-panel всех нод: создать, вкл/выкл, конфиг, QR"/>
+            <Button x:Name="SegUpdates" Style="{StaticResource Seg}" Content="Обновления" Tag="updates" Click="Seg_Click"
+                    ToolTip="Версии панелей и ядра Xray: обновление с бэкапом, смена ядра, бэкапы и откат"/>
         </StackPanel>
 
         <Grid Grid.Row="2">
@@ -221,6 +223,72 @@
                     </ListView.View>
                 </ListView>
             </DockPanel>
+
+            <!-- ── Обновления: панели, ядро Xray, бэкапы, откат ── -->
+            <Grid x:Name="UpdatesView" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="6"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="220" MinHeight="80"/>
+                </Grid.RowDefinitions>
+                <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+                    <Button Content="Проверить версии" Click="UpdCheck_Click" Margin="0,0,6,4"
+                            ToolTip="Версия панели, доступная версия и ядро Xray у всех панелей с токеном в QTerm"/>
+                    <Button Content="Обновить панель…" Click="UpdPanel_Click" Margin="0,0,6,4"
+                            ToolTip="Выделенные (или все, где есть обновление): бэкап базы → обновление → проверка версии. Ноды первыми, главная последней, стоп на первой ошибке"/>
+                    <Button Content="Ядро Xray…" Click="UpdXray_Click" Margin="0,0,6,4"
+                            ToolTip="Поставить выбранную версию Xray-core на выделенные панели (с бэкапом базы)"/>
+                    <Button Content="Geo-файлы" Click="UpdGeo_Click" Margin="0,0,6,4"
+                            ToolTip="Обновить geoip/geosite на выделенных панелях"/>
+                    <Button Content="Бэкап сейчас" Click="UpdBackup_Click" Margin="0,0,6,4"
+                            ToolTip="Снять базу с выделенных (или всех) панелей"/>
+                    <Button Content="Версия через терминал…" Click="UpdInstall_Click" Margin="0,0,6,4"
+                            ToolTip="Любая версия панели (откат или конкретный релиз): команда уходит в SSH-терминал сервера, QTerm ждёт новую версию"/>
+                    <TextBlock x:Name="UpdStatus" Style="{StaticResource Dim}" Margin="6,0,0,4" TextTrimming="CharacterEllipsis"/>
+                </WrapPanel>
+                <ListView x:Name="UpdList" Grid.Row="1" Style="{StaticResource Grid}" SelectionMode="Extended"
+                          SelectionChanged="UpdList_SelectionChanged">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="" Width="30">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate><TextBlock Text="●" Foreground="{Binding Dot}"/></DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Панель" Width="130" DisplayMemberBinding="{Binding Name}"/>
+                            <GridViewColumn Header="Роль" Width="110" DisplayMemberBinding="{Binding Role}"/>
+                            <GridViewColumn Header="Версия" Width="90" DisplayMemberBinding="{Binding Version}"/>
+                            <GridViewColumn Header="Доступна" Width="90" DisplayMemberBinding="{Binding Latest}"/>
+                            <GridViewColumn Header="Xray" Width="90" DisplayMemberBinding="{Binding Xray}"/>
+                            <GridViewColumn Header="SSH-сессия" Width="140" DisplayMemberBinding="{Binding Ssh}"/>
+                            <GridViewColumn Header="Последний бэкап" Width="170" DisplayMemberBinding="{Binding LastBackup}"/>
+                            <GridViewColumn Header="Состояние" Width="300" DisplayMemberBinding="{Binding State}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+                <GridSplitter Grid.Row="2" HorizontalAlignment="Stretch" Background="Transparent"/>
+                <WrapPanel Grid.Row="3" Margin="0,4,0,6">
+                    <TextBlock x:Name="BakCaption" Text="Бэкапы баз" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,4"/>
+                    <Button Content="Восстановить базу…" Click="BakRestore_Click" Margin="0,0,6,4"
+                            ToolTip="Загрузить выбранный бэкап в панель (перед этим — бэкап текущей базы)"/>
+                    <Button Content="Откатить панель к этому бэкапу…" Click="BakRollback_Click" Margin="0,0,6,4"
+                            ToolTip="Поставить версию панели из бэкапа через SSH-терминал и вернуть базу из него"/>
+                    <Button Content="Открыть папку" Click="BakFolder_Click" Margin="0,0,6,4"/>
+                </WrapPanel>
+                <ListView x:Name="BakList" Grid.Row="4" Style="{StaticResource Grid}" MouseDoubleClick="BakRestore_Click">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="Когда" Width="150" DisplayMemberBinding="{Binding When}"/>
+                            <GridViewColumn Header="Панель" Width="130" DisplayMemberBinding="{Binding Panel}"/>
+                            <GridViewColumn Header="Версия панели" Width="110" DisplayMemberBinding="{Binding Version}"/>
+                            <GridViewColumn Header="Размер" Width="90" DisplayMemberBinding="{Binding Size}"/>
+                            <GridViewColumn Header="Файл" Width="420" DisplayMemberBinding="{Binding File}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </Grid>
 
             <!-- ── Первая настройка: нет главной ── -->
             <Border x:Name="SetupView" Background="{DynamicResource BgBrush}" Visibility="Collapsed">

@@ -4,7 +4,7 @@ name: windows
 # zip в Releases с тегом win-vX.Y.Z (мак-релизы не трогает)
 on:
   push:
-    branches: [main]
+    branches: [main, 'win-*']
     paths: ['windows/**', '.github/workflows/windows.yml']
   workflow_dispatch:
 
@@ -44,6 +44,7 @@ jobs:
           path: windows/publish/
 
       - name: Release
+        if: github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

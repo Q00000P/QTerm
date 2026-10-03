@@ -294,6 +294,7 @@ public partial class NodeAddWindow : Window
             Token = xui ? "" : PassBox.Password,
             Pass = xui ? PassBox.Password : null,
             Clients = xui ? null : target?.Clients ?? same?.Clients,
+            Ssh = target?.Ssh ?? same?.Ssh,
             VerifyTls = TlsBox.SelectedIndex == 0,
         };
     }

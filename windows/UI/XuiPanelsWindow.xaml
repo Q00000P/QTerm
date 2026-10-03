@@ -67,6 +67,8 @@
                         <ComboBoxItem Content="Проверять"/>
                         <ComboBoxItem Content="Не проверять (самоподписанный)"/>
                     </ComboBox>
+                    <TextBlock Style="{StaticResource Cap}" Text="SSH-сессия этого сервера — для установки и отката версии панели в терминале. «Авто» — найду по адресу/IP"/>
+                    <ComboBox x:Name="SshBox" DisplayMemberPath="Name"/>
                     <TextBlock x:Name="ResultText" Style="{StaticResource Cap}" Margin="0,12,0,0"/>
                 </StackPanel>
             </ScrollViewer>

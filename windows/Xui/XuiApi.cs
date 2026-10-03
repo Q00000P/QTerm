@@ -358,6 +358,55 @@ public sealed class XuiApi : IDisposable
         return o?["token"]?.GetValue<string>();
     }
 
+    // ── обновления панели / ядро Xray / база ──
+
+    /// <summary>Текущая и последняя версия панели (панель сама спрашивает GitHub). null — не достучалась.</summary>
+    public async Task<JsonObject?> UpdateInfoAsync()
+    {
+        try { return await GetAsync("/server/getPanelUpdateInfo") as JsonObject; }
+        catch (XuiException) { return null; }
+    }
+
+    /// <summary>Самообновление панели (update.sh в отдельном юните systemd). Возвращает runId для опроса статуса.</summary>
+    public async Task<string?> StartUpdateAsync() =>
+        (await PostAsync("/server/updatePanel"))?["runId"]?.GetValue<string>();
+
+    /// <summary>{runId, state: pending|success|failed, exitCode, finishedAt} последнего самообновления.</summary>
+    public async Task<JsonObject?> UpdateStatusAsync() => await GetAsync("/server/getUpdateStatus") as JsonObject;
+
+    /// <summary>Версии Xray-core, доступные для установки (панель берёт их с GitHub).</summary>
+    public async Task<List<string>> XrayVersionsAsync()
+    {
+        var arr = await GetAsync("/server/getXrayVersion") as JsonArray ?? new JsonArray();
+        return arr.Select(n => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : "").Where(s => s.Length > 0).ToList();
+    }
+
+    public Task InstallXrayAsync(string version) => PostAsync("/server/installXray/" + Q(version));
+    public Task UpdateGeoAsync() => PostAsync("/server/updateGeofile");
+
+    /// <summary>Загрузить базу в панель (её настройки адресов/сертификатов/узла сохраняются). Панель перезапустится.</summary>
+    public async Task ImportDbAsync(byte[] db)
+    {
+        using var content = new MultipartFormDataContent();
+        var file = new ByteArrayContent(db);
+        file.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        content.Add(file, "db", "x-ui.db");
+        using var req = new HttpRequestMessage(HttpMethod.Post, Url.Base + "/panel/api/server/importDB") { Content = content };
+        HttpResponseMessage resp;
+        try { resp = await _http.SendAsync(req); }
+        catch (HttpRequestException ex) { throw new XuiException($"{Label}: нет связи ({ex.InnerException?.Message ?? ex.Message})"); }
+        catch (TaskCanceledException) { throw new XuiException($"{Label}: таймаут"); }
+        using (resp)
+        {
+            var text = await resp.Content.ReadAsStringAsync();
+            if ((int)resp.StatusCode is 401 or 403) throw new XuiException($"{Label}: нет прав на загрузку базы ({(int)resp.StatusCode})");
+            JsonNode? js = null;
+            try { js = JsonNode.Parse(text); } catch { }
+            if (js?["success"]?.GetValue<bool>() != true)
+                throw new XuiException($"{Label}: база не загрузилась: {js?["msg"]?.GetValue<string>() ?? "HTTP " + (int)resp.StatusCode}");
+        }
+    }
+
     /// <summary>Ссылка подписки по настройкам панели (subURI → иначе схема/домен/порт/путь).</summary>
     public static string? SubLink(JsonObject st, PanelUrl panel, string subId, bool clash = false)
     {
