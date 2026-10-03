@@ -278,8 +278,14 @@ enum SyncMerge {
     /// Секреты: локальный приоритет + доливка недостающих; "sync.*" не мержим.
     static func mergeSecrets(local: [String: String], remote: [String: String]) -> [String: String] {
         var out = local
-        for (k, v) in remote where out[k] == nil && !k.hasPrefix("sync.") {
-            out[k] = v
+        for (k, v) in remote where !k.hasPrefix("sync.") {
+            if let l = out[k] {
+                // «Ноды 3x-ui» (xui.panel:*, xui.names) — LWW по updatedAt внутри записи (канон Windows):
+                // иначе новый токен/пароль панели с другого устройства не доехал бы
+                if XuiStore.isLww(k) && XuiStore.remoteNewer(local: l, remote: v) { out[k] = v }
+            } else {
+                out[k] = v
+            }
         }
         return out
     }

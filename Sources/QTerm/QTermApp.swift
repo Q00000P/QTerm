@@ -86,6 +86,15 @@ struct QTermApp: App {
                 Button("Назначить ключ нодам без ключа…") { state.assignKeyToOrphans() }
                 Button("Задать passphrase ключа…") { state.setKeyPassphrase() }
                 Divider()
+                Button("Ноды 3x-ui…") { openWindow(id: "xui") }
+                    .keyboardShortcut(hotkeys.shortcut("xui"))
+                Button("Нода из выделения (3x-ui / AWG)…") {
+                    // выделение терминала уже в буфере (выделил = скопировал)
+                    XuiCenter.shared.requestNodeAdd(XuiCenter.clipboardText())
+                    openWindow(id: "xui")
+                }
+                .keyboardShortcut(hotkeys.shortcut("nodeadd"))
+                Divider()
                 Button("Экспорт вейлта в файл…") { state.exportVaultToFile() }
                 Button("Импорт вейлта из файла…") { state.importVaultFromFile() }
             }
@@ -127,6 +136,13 @@ struct QTermApp: App {
                     .keyboardShortcut(hotkeys.shortcut("files"))
             }
         }
+
+        // «Ноды 3x-ui»: главная + узлы, клиенты, ревизия имён, AWG (порт Windows).
+        Window("Ноды 3x-ui", id: "xui") {
+            XuiWindowView()
+                .environmentObject(state)
+        }
+        .defaultSize(width: 1240, height: 780)
 
         // Настройки (⌘,) — стандартное маковское окно.
         Settings {
@@ -262,6 +278,8 @@ final class AppState: ObservableObject {
     init() {
         loadVault()
         TerminalLook.install(self)
+        // «Ноды 3x-ui»: панели и токены — в secrets вейлта, правка → пуш синка
+        XuiCenter.shared.store = XuiStore(store: store, onChange: { [weak self] in self?.syncEngine.schedulePush() })
     }
 
     // MARK: - Вкладки
@@ -1341,6 +1359,14 @@ final class AppState: ObservableObject {
             }
             for (k, v) in payload.secrets where k.hasPrefix("key:") || k.hasPrefix("path:") {
                 if secrets[k] == nil { secrets[k] = v }
+            }
+            // «Ноды 3x-ui»: панели/токены и список имён — LWW по updatedAt (канон Windows)
+            for (k, v) in payload.secrets where XuiStore.isLww(k) {
+                if let l = secrets[k] {
+                    if XuiStore.remoteNewer(local: l, remote: v) { secrets[k] = v }
+                } else {
+                    secrets[k] = v
+                }
             }
 
             var snippets = vault.snippets ?? []

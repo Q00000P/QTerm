@@ -5,7 +5,7 @@ name: macos
 # иначе Keychain/Touch ID вейлта не узнают приложение.
 on:
   push:
-    branches: [main]
+    branches: [main, 'mac-*']
     paths-ignore: ['windows/**', '.github/workflows/windows.yml']
   workflow_dispatch:
 

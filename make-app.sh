@@ -8,7 +8,7 @@ APP_NAME="QTerm"
 BUNDLE_ID="com.q00000p.qterm"
 SIGN_IDENTITY="${QTERM_SIGN_IDENTITY:-QTerm Self-Signed}"
 BUILD_CONFIG="release"
-APP_VERSION="3.7.0"
+APP_VERSION="3.10.0"
 
 cd "$(dirname "$0")"
 mkdir -p build
@@ -76,6 +76,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSLocalNetworkUsageDescription</key>
     <string>QTerm подключается по SSH к серверам и роутерам в локальной сети</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+    <!-- «Ноды 3x-ui»: панели бывают по http и с самоподписанным сертификатом («Не проверять») -->
+    <key>NSAppTransportSecurity</key>
+    <dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict>
 </plist>
 PLIST
