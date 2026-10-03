@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Security
 
 // Состояние окна «Ноды 3x-ui»: главная + её узлы (встроенный мультинод 3x-ui v3), AWG-панели.
 // Порт XuiWindow.xaml.cs / XuiWindow.Awg.cs.
@@ -370,7 +371,8 @@ final class XuiModel: ObservableObject {
                 let cells: [(String, Color)] = srv.map { s in
                     let ibs = c.inboundIds.compactMap { ibById[$0] }.filter { $0.nodeId == s.nodeId }
                     let v = ibs.contains { !$0.isHys }, h = ibs.contains(where: \.isHys)
-                    return (v && h ? "V · H" : v ? "V" : h ? "H" : "—", v && h ? .green : v ? .blue : h ? .purple : .secondary)
+                    let color: Color = v && h ? Color.green : v ? Color.blue : h ? Color.purple : Color.secondary
+                    return (v && h ? "V · H" : v ? "V" : h ? "H" : "—", color)
                 }
                 let (pv, ph) = XuiOps.protos(c.inboundIds, ibById)
                 return ClientRow(src: c, dot: !c.enable ? .red : online.contains(c.email) ? .green : .secondary,
@@ -700,9 +702,10 @@ final class XuiModel: ObservableObject {
             let nodes = try await m.nodes()
             let ibById = XuiOps.byId(inbounds)
             let toks = XuiOps.stripTokens(inbounds, nodes)
+            let masterName = self.masterPanel?.name ?? "главная"
             func srv(_ id: Int?) -> String {
                 if let n = id { return nodes.first { $0.id == n }?.name ?? "узел \(n)" }
-                return self.masterPanel?.name ?? "главная"
+                return masterName
             }
             let merges = ops.planMerge(clients, inbounds, nodes)
             var items = ops.mergeItems(merges, scope: self.masterPanel?.name ?? "главная", inbounds, nodes)
