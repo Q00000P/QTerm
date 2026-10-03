@@ -3,6 +3,7 @@ import SessionVaultKit
 
 struct ContentView: View {
     @EnvironmentObject var state: AppState
+    @Environment(\.openWindow) private var openWindow
     @State private var editingSession: Session?
     @State private var stripHeight: CGFloat = 30
     /// Ширина проводника — запоминается между запусками.
@@ -54,33 +55,61 @@ struct ContentView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            // Локальный терминал мака — прибит НАД списком, не скроллится.
-            Button {
-                state.focusOrOpenLocalTab()
-            } label: {
-                HStack {
-                    Image(systemName: "laptopcomputer")
-                        .foregroundStyle(.cyan)
-                        .frame(width: 14)
-                    VStack(alignment: .leading) {
-                        Text("Mac").fontWeight(.semibold)
-                        Text("локальный терминал · ⌘L")
-                            .font(.caption2).foregroundStyle(.secondary)
+            // Локальный терминал мака и «Ноды 3x-ui» — пополам, прибиты НАД списком, не скроллятся.
+            HStack(spacing: 0) {
+                Button {
+                    state.focusOrOpenLocalTab()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "laptopcomputer")
+                            .foregroundStyle(.cyan)
+                            .frame(width: 14)
+                        VStack(alignment: .leading) {
+                            Text("Mac").fontWeight(.semibold)
+                            Text("терминал · ⌘L")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        let openLocal = state.tabs.filter { $0.sessionID == AppState.localSessionID }.count
+                        if openLocal > 0 {
+                            Text("\(openLocal)")
+                                .font(.caption2).foregroundStyle(.secondary)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Capsule().fill(.gray.opacity(0.25)))
+                        }
                     }
-                    Spacer()
-                    let openLocal = state.tabs.filter { $0.sessionID == AppState.localSessionID }.count
-                    if openLocal > 0 {
-                        Text("\(openLocal)")
-                            .font(.caption2).foregroundStyle(.secondary)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Capsule().fill(.gray.opacity(0.25)))
-                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .help("Локальный терминал мака (⌘L)")
+
+                Divider().frame(height: 30)
+
+                Button {
+                    openWindow(id: "xui")
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "server.rack")
+                            .foregroundStyle(.green)
+                            .frame(width: 14)
+                        VStack(alignment: .leading) {
+                            Text("3x-ui").fontWeight(.semibold)
+                            Text("ноды · AWG")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .help("Ноды 3x-ui: монитор, клиенты, узлы, AWG, обновления")
             }
-            .buttonStyle(.plain)
 
             Divider()
 
@@ -417,6 +446,11 @@ struct ContentView: View {
     }
 
     private func dotColor(for tab: Tab) -> Color {
+        // Локальный терминал мака — не SSH: соединения нет, смотрим на живой шелл
+        if tab.sessionID == AppState.localSessionID {
+            guard let lt = state.localTerminals[tab.id] else { return .yellow }
+            return lt.process.running ? .green : .red
+        }
         let conn = state.connections[tab.sessionID]
         switch conn?.status {
         case .connected:

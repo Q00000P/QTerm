@@ -747,6 +747,8 @@ public partial class MainWindow : Window
     private XuiWindow? _xuiWin;
 
     /// <summary>Ноды 3x-ui: одно окно, без Owner (owned-окно всегда висело бы над QTerm).</summary>
+    private void XuiButton_Click(object sender, RoutedEventArgs e) => ShowXui();
+
     private void ShowXui()
     {
         if (_xuiWin is null || !_xuiWin.IsLoaded)

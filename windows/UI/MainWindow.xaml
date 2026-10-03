@@ -24,13 +24,17 @@
             <Grid Grid.Row="0" Margin="10,10,10,6">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <Button Grid.Column="0" Content="＋ Нода" Click="NodeAdd_Click"
                         HorizontalAlignment="Stretch" Margin="0,0,6,0"/>
-                <Button Grid.Column="1" Content="Синк" Click="SyncButton_Click" Margin="0,0,6,0"/>
-                <Button Grid.Column="2" x:Name="MoreButton" Content="⋮" Click="MoreButton_Click" MinWidth="34"/>
+                <Button Grid.Column="1" Content="3x-ui" Click="XuiButton_Click"
+                        HorizontalAlignment="Stretch" Margin="0,0,6,0"
+                        ToolTip="Ноды 3x-ui: монитор, клиенты, узлы, AWG, обновления"/>
+                <Button Grid.Column="2" Content="Синк" Click="SyncButton_Click" Margin="0,0,6,0"/>
+                <Button Grid.Column="3" x:Name="MoreButton" Content="⋮" Click="MoreButton_Click" MinWidth="34"/>
             </Grid>
             <ListBox x:Name="SessionList" Grid.Row="1" Margin="10,0,10,0"
                      Background="{DynamicResource PanelBrush}"

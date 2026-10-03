@@ -8,7 +8,7 @@ APP_NAME="QTerm"
 BUNDLE_ID="com.q00000p.qterm"
 SIGN_IDENTITY="${QTERM_SIGN_IDENTITY:-QTerm Self-Signed}"
 BUILD_CONFIG="release"
-APP_VERSION="3.11.4"
+APP_VERSION="3.11.5"
 
 cd "$(dirname "$0")"
 mkdir -p build
