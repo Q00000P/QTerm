@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>QEditor</AssemblyName>
+    <RootNamespace>QEditor</RootNamespace>
+    <Version>3.10.0</Version>
+    <!-- Своя иконка = своя кнопка в таскбаре (мак-канон: QTermEditor в доке) -->
+    <ApplicationIcon>..\Assets\editor.ico</ApplicationIcon>
+    <!-- Per-Monitor V2: чёткий UI и верные координаты на мониторах с разным масштабом -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- AvalonEdit (MIT): нумерация строк, подсветка, undo, прямоугольное выделение -->
+    <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
+    <!-- DiffPlex (Apache-2.0): «Сравнить с» -->
+    <PackageReference Include="DiffPlex" Version="1.7.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Общая тема с QTerm: палитры Dark/Light + стили -->
+    <Page Include="..\Themes\Colors.Dark.xaml" Link="Themes\Colors.Dark.xaml" />
+    <Page Include="..\Themes\Colors.Light.xaml" Link="Themes\Colors.Light.xaml" />
+    <Page Include="..\Themes\Controls.xaml" Link="Themes\Controls.xaml" />
+
+    <!-- Подсветка синтаксиса: X.xshd (тёмная) и X.Light.xshd (светлая) -->
+    <EmbeddedResource Include="Syntax\*.xshd" LogicalName="QEditor.Syntax.%(Filename).xshd" />
+  </ItemGroup>
+
+</Project>

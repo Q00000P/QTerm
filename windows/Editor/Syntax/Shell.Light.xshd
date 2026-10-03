@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QShellLight" extensions=".sh" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#008000" fontStyle="italic"/>
+  <Color name="String" foreground="#A31515"/>
+  <Color name="Keyword" foreground="#0000FF"/>
+  <Color name="Control" foreground="#AF00DB"/>
+  <Color name="Number" foreground="#098658"/>
+  <Color name="Variable" foreground="#001080"/>
+  <Color name="Func" foreground="#795E26"/>
+  <RuleSet>
+    <Span color="Comment" begin="(?&lt;![\w$\\{])#" />
+    <Span color="String"><Begin>"</Begin><End>"</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String"><Begin>'</Begin><End>'</End></Span>
+    <Rule color="Variable">\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@#?*!$-]</Rule>
+    <Keywords color="Control"><Word>if</Word><Word>then</Word><Word>else</Word><Word>elif</Word><Word>fi</Word><Word>for</Word><Word>while</Word><Word>until</Word><Word>do</Word><Word>done</Word><Word>case</Word><Word>esac</Word><Word>in</Word><Word>select</Word><Word>function</Word><Word>return</Word><Word>exit</Word><Word>break</Word><Word>continue</Word></Keywords>
+    <Keywords color="Keyword"><Word>echo</Word><Word>printf</Word><Word>cd</Word><Word>pwd</Word><Word>read</Word><Word>source</Word><Word>eval</Word><Word>exec</Word><Word>trap</Word><Word>test</Word><Word>set</Word><Word>unset</Word><Word>export</Word><Word>local</Word><Word>readonly</Word><Word>declare</Word><Word>shift</Word><Word>alias</Word><Word>sudo</Word><Word>opkg</Word><Word>apt</Word><Word>systemctl</Word><Word>service</Word><Word>grep</Word><Word>sed</Word><Word>awk</Word><Word>cat</Word><Word>curl</Word><Word>wget</Word><Word>chmod</Word><Word>chown</Word><Word>mkdir</Word><Word>rm</Word><Word>cp</Word><Word>mv</Word><Word>ln</Word><Word>tar</Word><Word>kill</Word><Word>ps</Word><Word>ip</Word><Word>iptables</Word><Word>nft</Word></Keywords>
+    <Rule color="Func">\b[A-Za-z_][A-Za-z0-9_]*(?=\s*\(\s*\))</Rule>
+    <Rule color="Number">\b\d+\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>

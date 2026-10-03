@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QNginx" extensions=".nginx" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#6A9955" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Keyword" foreground="#569CD6"/>
+  <Color name="Variable" foreground="#9CDCFE"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Punct" foreground="#808080"/>
+  <Color name="Control" foreground="#C586C0"/>
+  <RuleSet>
+    <Span color="Comment" begin="#" />
+    <Span color="String"><Begin>"</Begin><End>"</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String"><Begin>'</Begin><End>'</End></Span>
+    <Rule color="Variable">\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^}]*\}</Rule>
+    <Keywords color="Control"><Word>server</Word><Word>location</Word><Word>upstream</Word><Word>http</Word><Word>events</Word><Word>stream</Word><Word>map</Word><Word>if</Word><Word>geo</Word><Word>types</Word><Word>include</Word></Keywords>
+    <Rule color="Keyword">^\s*[a-z_][a-z0-9_]*(?=\s)</Rule>
+    <Rule color="Number">\b\d+[kKmMgGsdhy]?\b</Rule>
+    <Rule color="Punct">[{};]</Rule>
+  </RuleSet>
+</SyntaxDefinition>

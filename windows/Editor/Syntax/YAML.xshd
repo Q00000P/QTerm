@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QYAML" extensions=".yaml;.yml" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#6A9955" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Key" foreground="#9CDCFE"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Const" foreground="#569CD6"/>
+  <Color name="Punct" foreground="#808080"/>
+  <Color name="Variable" foreground="#9CDCFE"/>
+  <RuleSet>
+    <Span color="Comment" begin="(?&lt;=^|\s)#" />
+    <Span color="String"><Begin>"</Begin><End>"</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String"><Begin>'</Begin><End>'</End></Span>
+    <Rule color="Key">^\s*(-\s+)*[^\s#'\"\-][^:#]*?(?=\s*:(\s|$))</Rule>
+    <Rule color="Punct">^\s*-(?=\s)|^---$|^\.\.\.$</Rule>
+    <Rule color="Variable">[&amp;*][A-Za-z0-9_-]+|!!?[A-Za-z0-9_]+</Rule>
+    <Keywords color="Const"><Word>true</Word><Word>false</Word><Word>null</Word><Word>yes</Word><Word>no</Word><Word>on</Word><Word>off</Word><Word>True</Word><Word>False</Word><Word>Null</Word></Keywords>
+    <Rule color="Number">\b0[xX][0-9a-fA-F]+\b|\b\d+(\.\d+)?([eE][+-]?\d+)?\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>

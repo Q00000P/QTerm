@@ -1,0 +1,34 @@
+<Window x:Class="QTermWin.UI.EditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Height="700" Width="1000"
+        Background="{StaticResource BgBrush}"
+        WindowStartupLocation="CenterOwner">
+    <Window.InputBindings>
+        <KeyBinding Modifiers="Control" Key="S" Command="{x:Static ApplicationCommands.Save}"/>
+    </Window.InputBindings>
+    <Window.CommandBindings>
+        <CommandBinding Command="{x:Static ApplicationCommands.Save}" Executed="Save_Executed"/>
+    </Window.CommandBindings>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <DockPanel Grid.Row="0" Margin="8,8,8,4">
+            <Button Content="Сохранить (Ctrl+S)" Click="SaveButton_Click" DockPanel.Dock="Left"/>
+            <TextBlock x:Name="Status" Foreground="{StaticResource DimBrush}"
+                       VerticalAlignment="Center" Margin="12,0,0,0"/>
+        </DockPanel>
+        <TextBox x:Name="Box" Grid.Row="1" Margin="8,0,8,8"
+                 AcceptsReturn="True" AcceptsTab="True"
+                 FontFamily="Cascadia Mono, Consolas" FontSize="13"
+                 TextWrapping="NoWrap"
+                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                 Background="{StaticResource PanelBrush}"
+                 Foreground="{StaticResource FgBrush}"
+                 BorderBrush="{StaticResource BorderDim}"
+                 CaretBrush="{StaticResource AccentBrush}"
+                 TextChanged="Box_TextChanged"/>
+    </Grid>
+</Window>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QXML" extensions=".xml;.html;.htm" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#6A9955" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Tag" foreground="#569CD6"/>
+  <Color name="Attr" foreground="#9CDCFE"/>
+  <Color name="Punct" foreground="#808080"/>
+  <Color name="Keyword" foreground="#569CD6"/>
+  <RuleSet>
+    <Span color="Comment" multiline="true"><Begin>&lt;!--</Begin><End>--&gt;</End></Span>
+    <Span color="Keyword" multiline="true"><Begin>&lt;!\[CDATA\[</Begin><End>\]\]&gt;</End></Span>
+    <Span color="Tag" multiline="true">
+      <Begin>&lt;[/?!]?</Begin><End>[/?]?&gt;</End>
+      <RuleSet>
+        <Span color="String"><Begin>"</Begin><End>"</End></Span>
+        <Span color="String"><Begin>'</Begin><End>'</End></Span>
+        <Rule color="Attr">[\w:.-]+(?=\s*=)</Rule>
+        <Rule color="Punct">=</Rule>
+      </RuleSet>
+    </Span>
+    <Rule color="Keyword">&amp;[\w#]+;</Rule>
+  </RuleSet>
+</SyntaxDefinition>

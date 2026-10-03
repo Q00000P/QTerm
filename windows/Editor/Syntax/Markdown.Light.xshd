@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QMarkdownLight" extensions=".md;.markdown" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Heading" foreground="#0000FF" fontWeight="bold"/>
+  <Color name="Bold" foreground="#1F1F1F" fontWeight="bold"/>
+  <Color name="Code" foreground="#A31515"/>
+  <Color name="Link" foreground="#0070C1"/>
+  <Color name="Punct" foreground="#6E6E6E"/>
+  <Color name="Comment" foreground="#008000" fontStyle="italic"/>
+  <RuleSet>
+    <Span color="Code" multiline="true"><Begin>```</Begin><End>```</End></Span>
+    <Rule color="Heading">^#{1,6}\s.*$</Rule>
+    <Rule color="Comment">^\s*&gt;.*$</Rule>
+    <Rule color="Code">`[^`]+`</Rule>
+    <Rule color="Bold">\*\*[^*]+\*\*|__[^_]+__</Rule>
+    <Rule color="Link">!?\[[^\]]*\]\([^)]*\)|https?://\S+</Rule>
+    <Rule color="Punct">^\s*([-*+]|\d+\.)\s</Rule>
+  </RuleSet>
+</SyntaxDefinition>

@@ -1,0 +1,450 @@
+﻿<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="xterm.css">
+<style>
+  html, body { margin:0; height:100%; background:#1E1F22; overflow:hidden; }
+  #root { height:100%; }
+  .term { height:100%; display:none; position:relative; }
+  .term.active { display:block; }
+  .sugg {
+    position:absolute; z-index:10; display:none;
+    background:rgba(32,34,37,0.94); border:1px solid #3A3D42; border-radius:10px;
+    font-family:"Cascadia Mono",Consolas,monospace; font-size:13px;
+    padding:4px 0; min-width:180px; max-width:420px; overflow:hidden;
+  }
+  .sugg .it { padding:3px 12px; cursor:pointer; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  .sugg .it.sel, .sugg .it:hover { background:#2D4A66; }
+  .sugg .it.own { color:#4FB3F6; }
+  .sugg .it.dic { color:#7ED87E; }
+  .sugg b { font-weight:700; }
+  .xterm .xterm-viewport { background:#1E1F22; }
+  /* светлая схема терминала */
+  body.light, body.light .xterm .xterm-viewport { background:#FFFFFF; }
+  body.light .sugg { background:rgba(255,255,255,0.97); border-color:#D0D3D8; color:#1B1B1F;
+    box-shadow:0 4px 14px rgba(0,0,0,0.12); }
+  body.light .sugg .it.sel, body.light .sugg .it:hover { background:#CCE4F7; }
+  body.light .sugg .it.own { color:#0067C0; }
+  body.light .sugg .it.dic { color:#107C10; }
+</style>
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+// Один WebView2 на всё приложение, N терминалов в DOM, переключение
+// видимостью. Протокол (JSON-строки):
+//   host→web: create{id} | show{id} | out{id,data(b64)} | close{id} | fit
+//   web→host: ready | in{id,data(b64 utf8)} | resize{id,cols,rows}
+const terms = new Map();
+let activeId = null;
+let broadcastOn = false;
+// Цветовые схемы терминала (ANSI-16 подобраны под фон: светлые цвета xterm
+// по умолчанию на белом не читаются)
+const THEMES = {
+  dark: {
+    background: "#1E1F22", foreground: "#DDDEE0", cursor: "#4FB3F6", cursorAccent: "#1E1F22",
+    selectionBackground: "#264F78",
+  },
+  light: {
+    background: "#FFFFFF", foreground: "#1F1F1F", cursor: "#0067C0", cursorAccent: "#FFFFFF",
+    selectionBackground: "#ADD6FF",
+    black: "#000000", red: "#CD3131", green: "#107C10", yellow: "#949800",
+    blue: "#0451A5", magenta: "#BC05BC", cyan: "#0598BC", white: "#555555",
+    brightBlack: "#666666", brightRed: "#CD3131", brightGreen: "#14A014", brightYellow: "#B5BA00",
+    brightBlue: "#0451A5", brightMagenta: "#BC05BC", brightCyan: "#0598BC", brightWhite: "#A5A5A5",
+  },
+};
+let themeName = "dark";
+// Горячие клавиши из хоста: [{id, c, s, a, code}]
+let keymap = [];
+let scrollbackLines = 20000; // мак-канон (дефолт xterm 1000 — «портянки целиком не посмотреть»)
+
+const enc = new TextEncoder();
+const b64FromText = s => {
+  const u8 = enc.encode(s);
+  let bin = "";
+  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+  return btoa(bin);
+};
+const u8FromB64 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
+const post = m => window.chrome.webview.postMessage(JSON.stringify(m));
+window.onerror = (msg, src, line) =>
+  post({ op:"jserr", text: msg + " @" + (src||"").split("/").pop() + ":" + line });
+
+// ── Подсказки команд (канон мак): трекер набора + панель у курсора ──
+function mkTracker(id) {
+  // anchor — где началась строка ввода (абс. строка буфера, колонка, текст промпта);
+  // tainted — в строку была вставка (многострочная/bracketed) → в журнал не пишем
+  return { buf:"", dirty:false, esc:0 /*0=нет,1=esc,2=csi*/, suppressed:false,
+           anchor:null, tainted:false, pasting:false };
+}
+
+// ── Фильтр журнала (мак-канон волны 17): пишем только то, что реально
+// выполнил шелл и видно на экране. Пароли на невидимом промпте, строки
+// вставки, ответы на вопросы [y/n] и TUI-меню — мимо.
+
+function lineAt(buf, idx) {
+  let text = "";
+  for (let i = idx; ; i++) {
+    const line = buf.getLine(i);
+    if (!line) break;
+    text += line.translateToString(false);
+    const next = buf.getLine(i + 1);
+    if (!next || !next.isWrapped) break;
+  }
+  return text.replace(/\s+$/, "");
+}
+
+function takeAnchor(t) {
+  const buf = t.term.buffer.active;
+  let idx = buf.baseY + buf.cursorY;
+  while (idx > 0 && buf.getLine(idx) && buf.getLine(idx).isWrapped) idx--;
+  // промпт = всё левее курсора на ПЕРВОЙ строке ввода (промпт короче ширины)
+  const first = buf.getLine(idx);
+  const prompt = first ? first.translateToString(false).slice(0, idx === buf.baseY + buf.cursorY ? buf.cursorX : undefined) : "";
+  return { idx, prompt, alt: buf.type === "alternate" };
+}
+
+function isShellPrompt(prompt) {
+  const p = prompt.replace(/\s+$/, "");
+  if (!p) return false;                                       // пустой промпт — не шелл
+  if (/pass(word|phrase)?|пароль|token|pin\b|otp/i.test(p)) return false;
+  if (/[:?]$/.test(p)) return false;                           // вопрос / «Enter value:»
+  if (/[\[(]\s*y\s*\/\s*n\s*[\])]/i.test(p)) return false; // [y/n] (Y/n)
+  if (/^(\w*>|>>>|\.\.\.)$/.test(p)) return false;          // продолжение: > quote> >>> ...
+  return true;
+}
+
+function screenCommand(t) {
+  const tr = t.tracker, a = tr.anchor;
+  const buf = t.term.buffer.active;
+  if (!a || a.alt || buf.type === "alternate") return null;
+  const text = lineAt(buf, a.idx);
+  if (!text.startsWith(a.prompt)) return null;                // промпт уехал/сменился
+  if (!isShellPrompt(a.prompt)) return null;
+  let cmd = text.slice(a.prompt.length);
+  cmd = cmd.replace(/\s{4,}\S.*$/, "");                      // RPROMPT справа
+  return cmd.trim();
+}
+
+function recordLine(t) {
+  const tr = t.tracker;
+  if (tr.tainted) return;                                    // строка со вставкой
+  const onScreen = screenCommand(t);
+  if (onScreen === null) return;
+  let cmd;
+  if (!tr.dirty) {
+    const typed = tr.buf.trim();
+    // эхо обязано быть на экране (невидимый пароль/звёздочки не пройдут)
+    if (typed.length < 2 || !onScreen.startsWith(typed)) return;
+    cmd = typed;
+  } else {
+    cmd = onScreen;                                          // правка стрелками/историей — берём с экрана
+  }
+  if (cmd.length >= 2 && cmd.length <= 250) post({ op:"cmd", id:t.id, cmd });
+}
+
+function postPrefix(t) {
+  const tr = t.tracker;
+  const prefix = (!tr.dirty && !tr.suppressed && tr.buf.length >= 1) ? tr.buf : "";
+  post({ op:"prefix", id:t.id, prefix });
+  console.debug("[sugg] prefix", JSON.stringify(prefix), "dirty", tr.dirty);
+}
+
+// Трекер v2: ESC-стейт-машина, байты последовательностей НЕ в буфер.
+// Возврат true = данные проглочены панелью (не слать в stdin).
+// Текущая командная строка активного терминала из БУФЕРА xterm (с учётом
+// враппа): что видишь — то и уедет. null = промпт-маркер не найден
+// (интерактивная программа — броадкастим только шелл-строки).
+function currentCommand(t) {
+  const buf = t.term.buffer.active;
+  let idx = buf.baseY + buf.cursorY;
+  while (idx > 0 && buf.getLine(idx) && buf.getLine(idx).isWrapped) idx--;
+  let text = "";
+  for (let i = idx; ; i++) {
+    const line = buf.getLine(i);
+    if (!line) break;
+    text += line.translateToString(true);
+    const next = buf.getLine(i + 1);
+    if (!next || !next.isWrapped) break;
+  }
+  const m = text.match(/[\s\S]*[#$]\s+/);
+  if (!m) return null;
+  const cmd = text.slice(m[0].length).trim();
+  return cmd.length ? cmd : null;
+}
+
+function track(t, d) {
+  const tr = t.tracker;
+  // WYSIWYG-броадкаст: Enter в активной → её ВИДИМАЯ строка целиком во все
+  // остальные ноды (стрелки/история/Tab живут только в активной)
+  if (broadcastOn && d === "\r" && !t.sugg.visible) {
+    const cmd = currentCommand(t);
+    if (cmd) post({ op:"bcast-cmd", id:t.id, cmd });
+    // сам \r уходит обычным путём в активную ноду
+  }
+  // Клавиатурный выбор при активной панели — ПЕРЕД трекером
+  if (t.sugg.visible) {
+    if (d === "\x1b[B" || d === "\x1bOB") { suggMove(t, 1); return true; }
+    if (d === "\x1b[A" || d === "\x1bOA") { suggMove(t, -1); return true; }
+    if (d === "\x1b") { suggHide(t); tr.suppressed = true; return true; }
+    if ((d === "\r" || d === "\t") && t.sugg.sel >= 0) { suggPick(t, t.sugg.sel); return true; }
+  }
+  // Якорь строки — на первом вводе после промпта (до эха)
+  if (!tr.anchor) tr.anchor = takeAnchor(t);
+  // Вставка: bracketed paste или кусок >1 символа с переводом строки
+  if (d.includes("\x1b[200~") || (d.length > 1 && /[\r\n]/.test(d))) tr.tainted = true;
+  const chunkPaste = d.length > 1 && /[\r\n]/.test(d) && !d.startsWith("\x1b");
+  for (const ch of d) {
+    if (tr.esc === 1) { tr.esc = (ch === "[" || ch === "O") ? 2 : 0; tr.dirty = true; continue; }
+    if (tr.esc === 2) { const c = ch.charCodeAt(0); if (c >= 0x40 && c <= 0x7e) tr.esc = 0; continue; }
+    switch (ch) {
+      case "\x1b": tr.esc = 1; tr.dirty = true; break;
+      case "\r": case "\n": {
+        if (!chunkPaste) recordLine(t);
+        tr.buf = ""; tr.dirty = false; tr.suppressed = false; tr.anchor = null;
+        // строки многострочной вставки дальше тоже «tainted» — сбрасываем только
+        // на ручном Enter (кусок из одного \r)
+        if (!chunkPaste) tr.tainted = false;
+        break;
+      }
+      case "\x7f": case "\b": tr.buf = tr.buf.slice(0, -1); break;
+      case "\x15": tr.buf = ""; tr.dirty = false; tr.tainted = false; break; // ^U: строка стёрта = известна
+      case "\x17": tr.buf = tr.buf.replace(/\S+\s*$/, ""); break; // ^W
+      case "\x03": tr.buf = ""; tr.dirty = false; tr.tainted = false; tr.anchor = null; break; // ^C
+      case "\x01": case "\x05": case "\x0b": tr.dirty = true; break; // ^A ^E ^K
+      case "\t": tr.dirty = true; break;
+      default:
+        if (ch >= " ") { tr.buf += ch; tr.suppressed = false; }
+    }
+  }
+  postPrefix(t);
+  return false;
+}
+
+function mkSugg(t) {
+  const el = document.createElement("div");
+  el.className = "sugg";
+  t.el.appendChild(el);
+  return { el, items:[], sel:-1, visible:false, prefix:"" };
+}
+
+function suggShow(t, prefix, items) {
+  const s = t.sugg;
+  if (!items.length || document.activeElement === null) { suggHide(t); return; }
+  s.items = items; s.sel = -1; s.prefix = prefix; s.visible = true;
+  s.el.innerHTML = "";
+  items.forEach((it, i) => {
+    const div = document.createElement("div");
+    div.className = "it " + (it.own ? "own" : "dic");
+    const esc = x => x.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    div.innerHTML = (it.own ? "★ " : "") + "<b>" + esc(prefix) + "</b>" + esc(it.t.slice(prefix.length));
+    div.addEventListener("mousedown", ev => { if (ev.button === 0) { ev.preventDefault(); suggPick(t, i); } });
+    // ПКМ (мак-канон): своя ★ — Shift+ПКМ «в словарь», ПКМ «удалить из журнала»;
+    // словарная — ПКМ «скрыть из словаря»
+    div.addEventListener("contextmenu", ev => {
+      ev.preventDefault();
+      if (it.own) post(ev.shiftKey ? { op:"dict", act:"add", cmd:it.t }
+                                   : { op:"delcmd", id:t.id, cmd:it.t });
+      else post({ op:"dict", act:"hide", cmd:it.t });
+      suggHide(t);
+    });
+    div.title = it.own ? "ПКМ — удалить из журнала · Shift+ПКМ — в словарь" : "ПКМ — скрыть из словаря";
+    s.el.appendChild(div);
+  });
+  // Позиция у курсора: xterm отдаёт cursorX/Y (viewport-относительно)
+  const buf = t.term.buffer.active;
+  const screen = t.el.querySelector(".xterm-screen");
+  const cw = screen.clientWidth / t.term.cols;
+  const chh = screen.clientHeight / t.term.rows;
+  s.el.style.display = "block"; // сначала показать — потом мерить
+  const x = Math.max(0, Math.min(buf.cursorX * cw, t.el.clientWidth - s.el.offsetWidth - 8));
+  const yBelow = (buf.cursorY + 1) * chh + 2;
+  const h = s.el.offsetHeight;
+  s.el.style.left = x + "px";
+  s.el.style.top = (yBelow + h < t.el.clientHeight ? yBelow : Math.max(0, buf.cursorY * chh - h - 2)) + "px";
+}
+
+function suggHide(t) {
+  t.sugg.visible = false; t.sugg.sel = -1;
+  t.sugg.el.style.display = "none";
+}
+
+function suggMove(t, dir) {
+  const s = t.sugg;
+  s.sel = (s.sel + dir + s.items.length) % s.items.length;
+  [...s.el.children].forEach((c, i) => c.classList.toggle("sel", i === s.sel));
+}
+
+function suggPick(t, i) {
+  const s = t.sugg;
+  const it = s.items[i];
+  if (!it) return;
+  const rest = it.t.slice(s.prefix.length);
+  if (rest) post({ op:"in", id:t.id, data:b64FromText(rest) });
+  t.tracker.buf = it.t; // локально дополнили — трекер в курсе
+  suggHide(t);
+  postPrefix(t);
+  t.term.focus();
+}
+
+function create(id) {
+  if (terms.has(id)) return;
+  const el = document.createElement("div");
+  el.className = "term";
+  document.getElementById("root").appendChild(el);
+  const term = new Terminal({
+    fontFamily: '"Cascadia Mono", Consolas, monospace',
+    fontSize: 14,
+    scrollback: scrollbackLines,
+    theme: THEMES[themeName],
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(el);
+  const t = { id, term, fit, el, tracker: mkTracker(id) };
+  t.sugg = mkSugg(t);
+  // Папка шелла для «следовать за терминалом» (файловая панель, как у мобы):
+  // заголовок окна «user@host: /path» (дефолт bash в Debian/Ubuntu) и OSC 7 file://host/path
+  term.onTitleChange(title => post({ op:"cwd", id, v: String(title || ""), osc7:false }));
+  try {
+    term.parser.registerOscHandler(7, data => { post({ op:"cwd", id, v: String(data || ""), osc7:true }); return true; });
+  } catch (e) { /* старый xterm без parser API */ }
+  term.onData(d => {
+    if (track(t, d)) return; // проглочено панелью
+    post({ op: "in", id, data: b64FromText(d) });
+  });
+  // Копирование/вставка (моба-канон): выделил = скопировал, ПКМ = вставить
+  term.onSelectionChange(() => {
+    const sel = term.getSelection();
+    if (sel) post({ op:"copy", text: sel });
+  });
+  el.addEventListener("contextmenu", ev => {
+    ev.preventDefault();
+    post({ op:"paste", id });
+  });
+  term.attachCustomKeyEventHandler(ev => {
+    if (ev.type !== "keydown") return true;
+    // Горячие клавиши приложения (настраиваются в хосте, op "keys"):
+    // сравниваем ФИЗИЧЕСКУЮ клавишу ev.code — не зависит от раскладки
+    for (const b of keymap) {
+      if (b.code === ev.code && b.c === ev.ctrlKey && b.s === ev.shiftKey && b.a === ev.altKey) {
+        ev.preventDefault();
+        if (b.id === "copy") {
+          const sel = term.getSelection();
+          if (sel) post({ op:"copy", text: sel });
+        } else if (b.id === "paste") {
+          post({ op:"paste", id });
+        } else {
+          post({ op:"hotkey", key: b.id });
+        }
+        return false;
+      }
+    }
+    if (ev.shiftKey && !ev.ctrlKey && !ev.altKey && ev.code === "Insert") { // канон Windows
+      post({ op:"paste", id });
+      return false;
+    }
+    return true;
+  });
+  term.onResize(({ cols, rows }) => { suggHide(t); post({ op: "resize", id, cols, rows }); });
+  terms.set(id, t);
+}
+
+function show(id) {
+  const t = terms.get(id);
+  if (!t) return;
+  for (const [k, v] of terms) v.el.classList.toggle("active", k === id);
+  activeId = id;
+  requestAnimationFrame(() => { t.fit.fit(); t.term.focus(); });
+}
+
+function close(id) {
+  const t = terms.get(id);
+  if (!t) return;
+  t.term.dispose();
+  t.el.remove();
+  terms.delete(id);
+  if (activeId === id) activeId = null;
+}
+
+window.chrome.webview.addEventListener("message", ev => {
+  const m = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
+  switch (m.op) {
+    case "create": create(m.id); break;
+    case "show":   show(m.id); break;
+    case "out": {
+      const t = terms.get(m.id);
+      if (t) t.term.write(u8FromB64(m.data));
+      break;
+    }
+    case "close":  close(m.id); break;
+    case "clear": {
+      const t = terms.get(m.id);
+      if (t) {
+        t.term.clear(); t.term.scrollToBottom();
+        t.tracker.buf = ""; t.tracker.dirty = false; // канон: очистка сбрасывает трекер
+        suggHide(t);
+      }
+      break;
+    }
+    case "broadcast":
+      broadcastOn = !!m.on;
+      break;
+    case "scrollback":
+      scrollbackLines = m.lines;
+      for (const t of terms.values()) t.term.options.scrollback = m.lines;
+      break;
+    case "keys":
+      keymap = Array.isArray(m.items) ? m.items : [];
+      break;
+    case "theme":
+      themeName = m.light ? "light" : "dark";
+      document.body.classList.toggle("light", !!m.light);
+      for (const t of terms.values()) t.term.options.theme = THEMES[themeName];
+      break;
+    case "font":
+      for (const t of terms.values()) {
+        t.term.options.fontSize = m.size;
+        t.fit.fit();
+      }
+      break;
+    case "do-paste": {
+      const t = terms.get(m.id);
+      if (t) {
+        const bytes = u8FromB64(m.data);
+        t.term.paste(new TextDecoder().decode(bytes)); // → onData → track()
+      }
+      break;
+    }
+    case "suggest": {
+      const t = terms.get(m.id);
+      if (!t) break;
+      console.debug("[sugg] resp", JSON.stringify(m.prefix), "items", m.items.length,
+        "buf", JSON.stringify(t.tracker.buf), "dirty", t.tracker.dirty);
+      if (!m.items.length || m.prefix !== (t.tracker.dirty ? "" : t.tracker.buf)) { suggHide(t); break; }
+      suggShow(t, m.prefix, m.items);
+      break;
+    }
+    case "fit": {
+      const t = terms.get(activeId);
+      if (t) t.fit.fit();
+      break;
+    }
+  }
+});
+
+window.addEventListener("resize", () => {
+  const t = terms.get(activeId);
+  if (t) t.fit.fit();
+});
+
+post({ op: "ready" });
+</script>
+</body>
+</html>

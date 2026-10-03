@@ -1,0 +1,13 @@
+﻿<Application x:Class="QEditor.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- [0] палитра — ThemeManager подменяет её на лету (Colors.Light.xaml) -->
+                <ResourceDictionary Source="Themes/Colors.Dark.xaml"/>
+                <ResourceDictionary Source="Themes/Controls.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

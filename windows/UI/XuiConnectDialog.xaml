@@ -1,0 +1,50 @@
+﻿<Window x:Class="QTermWin.UI.XuiConnectDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Подключить ноду" Width="520" SizeToContent="Height"
+        Background="{DynamicResource BgBrush}" Foreground="{DynamicResource FgBrush}"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="Margin" Value="0,10,0,4"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+    </Window.Resources>
+    <StackPanel Margin="16">
+        <StackPanel x:Name="SavedPanel">
+            <TextBlock Text="Сохранённая нода (необязательно)" Margin="0,0,0,4"/>
+            <ComboBox x:Name="SavedBox" DisplayMemberPath="Name" SelectionChanged="Saved_Changed"/>
+        </StackPanel>
+        <TextBlock Text="Адрес панели ноды — как в браузере, например https://us3.example.com:8443/abc/"/>
+        <TextBox x:Name="UrlBox" Padding="6"/>
+        <TextBlock Text="API-токен ноды: в её панели Настройки панели → Учетная запись → API-токены → «Новый токен»"/>
+        <PasswordBox x:Name="TokenBox" Padding="6"/>
+        <StackPanel x:Name="NamePanel">
+            <TextBlock Text="Имя узла на главной (для новой ноды; пусто — из домена)"/>
+            <TextBox x:Name="NameBox" Padding="6"/>
+        </StackPanel>
+        <TextBlock Text="Сертификат панели ноды"/>
+        <ComboBox x:Name="TlsBox" SelectedIndex="0">
+            <ComboBoxItem Content="Проверять (Let's Encrypt и т.п.)"/>
+            <ComboBoxItem Content="Не проверять (самоподписанный)"/>
+        </ComboBox>
+        <StackPanel x:Name="ExtraPanel">
+            <TextBlock Text="Остальных клиентов главной (которых на ноде нет)"/>
+            <ComboBox x:Name="OthersBox" SelectedIndex="1">
+                <ComboBoxItem Content="Привязать и к этой ноде"/>
+                <ComboBoxItem Content="Не трогать"/>
+            </ComboBox>
+            <TextBlock Text="Токен ноды в QTerm (нужен для ревизии имён на самой ноде)"/>
+            <ComboBox x:Name="SaveBox" SelectedIndex="0">
+                <ComboBoxItem Content="Сохранить в вейлт (DPAPI, синк — в зашифрованном виде)"/>
+                <ComboBoxItem Content="Не сохранять"/>
+            </ComboBox>
+        </StackPanel>
+        <TextBlock x:Name="ErrorText" Foreground="#E5534B" Visibility="Collapsed"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Отмена" Click="Cancel_Click" Margin="0,0,8,0" MinWidth="90"/>
+            <Button x:Name="OkButton" Content="Далее — план" Click="Ok_Click" MinWidth="120" IsDefault="True"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

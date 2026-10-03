@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QCLike" extensions=".c;.h;.cpp;.cs;.java;.go;.rs" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#6A9955" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Keyword" foreground="#569CD6"/>
+  <Color name="Control" foreground="#C586C0"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Func" foreground="#DCDCAA"/>
+  <Color name="Type" foreground="#4EC9B0"/>
+  <Color name="Const" foreground="#569CD6"/>
+  <Color name="Punct" foreground="#808080"/>
+  <RuleSet>
+    <Span color="Comment" begin="//" />
+    <Span color="Comment" multiline="true"><Begin>/*</Begin><End>*/</End></Span>
+    <Span color="String"><Begin>"</Begin><End>"</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String"><Begin>'</Begin><End>'</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String" multiline="true"><Begin>`</Begin><End>`</End></Span>
+    <Rule color="Punct">^\s*#\s*\w+</Rule>
+    <Keywords color="Control"><Word>if</Word><Word>else</Word><Word>for</Word><Word>foreach</Word><Word>while</Word><Word>do</Word><Word>switch</Word><Word>case</Word><Word>default</Word><Word>break</Word><Word>continue</Word><Word>return</Word><Word>goto</Word><Word>try</Word><Word>catch</Word><Word>finally</Word><Word>throw</Word><Word>throws</Word><Word>defer</Word><Word>go</Word><Word>select</Word><Word>match</Word><Word>loop</Word><Word>yield</Word><Word>await</Word></Keywords>
+    <Keywords color="Keyword"><Word>using</Word><Word>namespace</Word><Word>package</Word><Word>import</Word><Word>class</Word><Word>struct</Word><Word>interface</Word><Word>enum</Word><Word>union</Word><Word>typedef</Word><Word>public</Word><Word>private</Word><Word>protected</Word><Word>internal</Word><Word>static</Word><Word>const</Word><Word>readonly</Word><Word>volatile</Word><Word>virtual</Word><Word>override</Word><Word>abstract</Word><Word>sealed</Word><Word>new</Word><Word>delete</Word><Word>this</Word><Word>base</Word><Word>super</Word><Word>func</Word><Word>fn</Word><Word>let</Word><Word>mut</Word><Word>var</Word><Word>impl</Word><Word>trait</Word><Word>pub</Word><Word>mod</Word><Word>use</Word><Word>extern</Word><Word>async</Word><Word>sizeof</Word><Word>typeof</Word><Word>in</Word><Word>out</Word><Word>ref</Word><Word>operator</Word><Word>template</Word><Word>typename</Word><Word>where</Word></Keywords>
+    <Keywords color="Type"><Word>void</Word><Word>int</Word><Word>uint</Word><Word>long</Word><Word>ulong</Word><Word>short</Word><Word>ushort</Word><Word>byte</Word><Word>sbyte</Word><Word>char</Word><Word>bool</Word><Word>float</Word><Word>double</Word><Word>decimal</Word><Word>string</Word><Word>object</Word><Word>auto</Word><Word>size_t</Word><Word>i32</Word><Word>i64</Word><Word>u8</Word><Word>u32</Word><Word>u64</Word><Word>f32</Word><Word>f64</Word><Word>usize</Word><Word>str</Word><Word>String</Word><Word>int32</Word><Word>int64</Word><Word>uint8</Word><Word>uint32</Word><Word>uint64</Word><Word>float64</Word><Word>error</Word><Word>rune</Word><Word>map</Word><Word>chan</Word></Keywords>
+    <Keywords color="Const"><Word>true</Word><Word>false</Word><Word>null</Word><Word>nullptr</Word><Word>nil</Word><Word>None</Word><Word>Some</Word><Word>Ok</Word><Word>Err</Word></Keywords>
+    <Rule color="Func">\b[A-Za-z_]\w*(?=\s*\()</Rule>
+    <Rule color="Number">\b0[xX][0-9a-fA-F]+\b|\b\d+(\.\d+)?([eE][+-]?\d+)?\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>

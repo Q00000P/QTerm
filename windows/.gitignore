@@ -1,0 +1,10 @@
+bin/
+obj/
+publish/
+QTerm-win-portable.zip
+*.user
+QTerm-win-portable/
+secrets.local.props
+_claude/
+Editor/bin/
+Editor/obj/

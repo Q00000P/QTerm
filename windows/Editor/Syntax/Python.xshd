@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QPython" extensions=".py" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#6A9955" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Keyword" foreground="#569CD6"/>
+  <Color name="Control" foreground="#C586C0"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Func" foreground="#DCDCAA"/>
+  <Color name="Type" foreground="#4EC9B0"/>
+  <Color name="Const" foreground="#569CD6"/>
+  <RuleSet>
+    <Span color="Comment" begin="#" />
+    <Span color="String" multiline="true"><Begin>"""</Begin><End>"""</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String" multiline="true"><Begin>'''</Begin><End>'''</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String"><Begin>"</Begin><End>"</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String"><Begin>'</Begin><End>'</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Keywords color="Control"><Word>if</Word><Word>elif</Word><Word>else</Word><Word>for</Word><Word>while</Word><Word>try</Word><Word>except</Word><Word>finally</Word><Word>with</Word><Word>return</Word><Word>yield</Word><Word>break</Word><Word>continue</Word><Word>pass</Word><Word>raise</Word><Word>import</Word><Word>from</Word><Word>as</Word><Word>async</Word><Word>await</Word><Word>match</Word><Word>case</Word></Keywords>
+    <Keywords color="Keyword"><Word>def</Word><Word>class</Word><Word>lambda</Word><Word>global</Word><Word>nonlocal</Word><Word>del</Word><Word>in</Word><Word>is</Word><Word>not</Word><Word>and</Word><Word>or</Word><Word>assert</Word><Word>print</Word></Keywords>
+    <Keywords color="Const"><Word>True</Word><Word>False</Word><Word>None</Word><Word>self</Word><Word>cls</Word></Keywords>
+    <Rule color="Type">(?&lt;=\bclass\s+)[A-Za-z_]\w*</Rule>
+    <Rule color="Func">(?&lt;=\bdef\s+)[A-Za-z_]\w*|@[\w.]+</Rule>
+    <Rule color="Number">\b0[xX][0-9a-fA-F]+\b|\b\d+(\.\d+)?([eE][+-]?\d+)?\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>

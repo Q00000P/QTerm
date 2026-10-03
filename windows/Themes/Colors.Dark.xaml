@@ -1,0 +1,27 @@
+﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Палитра «Тёмная» (QTerm + QEditor). Ключи обязаны совпадать в обеих палитрах -->
+    <SolidColorBrush x:Key="BgBrush" Color="#1B1C1F"/>
+    <SolidColorBrush x:Key="PanelBrush" Color="#232529"/>
+    <SolidColorBrush x:Key="Panel2Brush" Color="#2A2D32"/>
+    <SolidColorBrush x:Key="FgBrush" Color="#E8EAED"/>
+    <SolidColorBrush x:Key="DimBrush" Color="#8B919A"/>
+    <SolidColorBrush x:Key="BorderDim" Color="#34373D"/>
+    <SolidColorBrush x:Key="HoverBrush" Color="#31353B"/>
+    <SolidColorBrush x:Key="HoverEdge" Color="#4A5058"/>
+    <SolidColorBrush x:Key="SelBrush" Color="#2D4A66"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="#4FA3E3"/>
+    <SolidColorBrush x:Key="ThumbBrush" Color="#4A5058"/>
+    <SolidColorBrush x:Key="EditorBgBrush" Color="#1E1F22"/>
+    <SolidColorBrush x:Key="TabActiveBrush" Color="#1E1F22"/>
+    <SolidColorBrush x:Key="TabIdleBrush" Color="#232529"/>
+    <SolidColorBrush x:Key="TabActiveEdge" Color="#4FA3E3"/>
+    <!-- вкладки нод в QTerm (цвета как до тем) -->
+    <SolidColorBrush x:Key="NodeTabActive" Color="#33373D"/>
+    <SolidColorBrush x:Key="NodeTabIdle" Color="#26282C"/>
+    <SolidColorBrush x:Key="TabIdleEdge" Color="#34373D"/>
+    <SolidColorBrush x:Key="DirtyBrush" Color="#E5A445"/>
+    <SolidColorBrush x:Key="DangerBgBrush" Color="#3D2626"/>
+    <SolidColorBrush x:Key="DangerEdgeBrush" Color="#6B3A3A"/>
+    <SolidColorBrush x:Key="DangerOnBrush" Color="#6B3A3A"/>
+</ResourceDictionary>

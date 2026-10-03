@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QPowerShell" extensions=".ps1;.psm1;.psd1" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#6A9955" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Keyword" foreground="#569CD6"/>
+  <Color name="Control" foreground="#C586C0"/>
+  <Color name="Variable" foreground="#9CDCFE"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Func" foreground="#DCDCAA"/>
+  <Color name="Type" foreground="#4EC9B0"/>
+  <RuleSet>
+    <Span color="Comment" multiline="true"><Begin>&lt;#</Begin><End>#&gt;</End></Span>
+    <Span color="Comment" begin="#" />
+    <Span color="String"><Begin>"</Begin><End>"</End></Span>
+    <Span color="String"><Begin>'</Begin><End>'</End></Span>
+    <Rule color="Variable">\$[A-Za-z_][\w:]*|\$\{[^}]*\}</Rule>
+    <Keywords color="Control"><Word>if</Word><Word>elseif</Word><Word>else</Word><Word>switch</Word><Word>foreach</Word><Word>for</Word><Word>while</Word><Word>do</Word><Word>until</Word><Word>break</Word><Word>continue</Word><Word>return</Word><Word>try</Word><Word>catch</Word><Word>finally</Word><Word>throw</Word><Word>trap</Word><Word>exit</Word><Word>in</Word></Keywords>
+    <Keywords color="Keyword"><Word>function</Word><Word>param</Word><Word>begin</Word><Word>process</Word><Word>end</Word><Word>filter</Word><Word>class</Word><Word>enum</Word><Word>using</Word><Word>workflow</Word></Keywords>
+    <Rule color="Type">\[[A-Za-z_][\w.\[\]]*\]</Rule>
+    <Rule color="Func">\b[A-Z][a-z]+-[A-Za-z]+\b</Rule>
+    <Rule color="Number">\b\d+(\.\d+)?\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>

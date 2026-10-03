@@ -1,0 +1,75 @@
+﻿<Window x:Class="QTermWin.UI.XuiPanelsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Панели 3x-ui и AWG" Width="860" Height="680" MinWidth="680" MinHeight="420"
+        Background="{DynamicResource BgBrush}" Foreground="{DynamicResource FgBrush}"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Window.Resources>
+        <Style x:Key="Cap" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="Margin" Value="0,10,0,4"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="260"/>
+            <ColumnDefinition Width="14"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <DockPanel Grid.Column="0">
+            <Button DockPanel.Dock="Bottom" Content="＋ Из выделения / по паролю…" Click="FromSelection_Click" Margin="0,6,0,0"
+                    ToolTip="Итог установщика из буфера (или вручную): вход по паролю, выпуск API-токена, новая или замена"/>
+            <Button DockPanel.Dock="Bottom" Content="＋ Новая панель" Click="New_Click" Margin="0,8,0,0"/>
+            <ListBox x:Name="List" SelectionChanged="List_SelectionChanged"
+                     Background="{DynamicResource PanelBrush}"
+                     BorderBrush="{DynamicResource BorderDim}" BorderThickness="1">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Margin="4,3">
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="{DynamicResource FgBrush}"/>
+                            <TextBlock Text="{Binding RoleText}" FontSize="12" Foreground="{DynamicResource DimBrush}"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </DockPanel>
+
+        <DockPanel Grid.Column="2">
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                <Button Content="Удалить" Click="Delete_Click" Margin="0,0,8,0"/>
+                <Button Content="Проверить" Click="Test_Click" Margin="0,0,8,0"/>
+                <Button Content="Сохранить" Click="Save_Click" IsDefault="True" MinWidth="100"/>
+            </StackPanel>
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="0,0,6,0">
+                    <TextBlock Style="{StaticResource Cap}" Margin="0,0,0,4"
+                               Text="3x-ui главная — панель, куда добавлены узлы: с неё клиенты и подписки. 3x-ui нода — для ревизии и подключения. AWG-панель — awg-panel ноды (клиенты, конфиги, QR); старая — amnezia-wg-easy с одним паролем. «Проверить» сам определит вид AWG-панели."/>
+                    <TextBlock Style="{StaticResource Cap}" Text="Имя"/>
+                    <TextBox x:Name="NameBox" Padding="6"/>
+                    <TextBlock Style="{StaticResource Cap}" Text="Роль"/>
+                    <ComboBox x:Name="RoleBox" SelectedIndex="0" SelectionChanged="Role_Changed">
+                        <ComboBoxItem Content="3x-ui · главная"/>
+                        <ComboBoxItem Content="3x-ui · нода"/>
+                        <ComboBoxItem Content="AWG-панель (awg-panel)"/>
+                        <ComboBoxItem Content="AWG-панель старая (amnezia-wg-easy, только пароль)"/>
+                    </ComboBox>
+                    <TextBlock Style="{StaticResource Cap}" Text="Адрес панели — как в браузере (https://домен:порт/путь/)"/>
+                    <TextBox x:Name="UrlBox" Padding="6"/>
+                    <StackPanel x:Name="LoginPanel" Visibility="Collapsed">
+                        <TextBlock Style="{StaticResource Cap}" Text="Логин админа awg-panel (2FA должна быть выключена — иначе панель не пускает по API)"/>
+                        <TextBox x:Name="LoginBox" Padding="6"/>
+                    </StackPanel>
+                    <TextBlock x:Name="TokenCap" Style="{StaticResource Cap}" Text="API-токен (Настройки панели → Учетная запись → API-токены). Пусто — оставить сохранённый"/>
+                    <PasswordBox x:Name="TokenBox" Padding="6"/>
+                    <TextBlock Style="{StaticResource Cap}" Text="Сертификат"/>
+                    <ComboBox x:Name="TlsBox" SelectedIndex="0">
+                        <ComboBoxItem Content="Проверять"/>
+                        <ComboBoxItem Content="Не проверять (самоподписанный)"/>
+                    </ComboBox>
+                    <TextBlock x:Name="ResultText" Style="{StaticResource Cap}" Margin="0,12,0,0"/>
+                </StackPanel>
+            </ScrollViewer>
+        </DockPanel>
+    </Grid>
+</Window>

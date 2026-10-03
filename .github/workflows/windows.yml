@@ -1,0 +1,60 @@
+name: windows
+
+# QTerm Windows (папка windows/): релизная сборка QTerm.exe + QEditor.exe на каждый пуш,
+# zip в Releases с тегом win-vX.Y.Z (мак-релизы не трогает)
+on:
+  push:
+    branches: [main]
+    paths: ['windows/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: windows
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = ([xml](Get-Content QTermWin.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Publish (QTerm.exe + QEditor.exe)
+        shell: cmd
+        env:
+          QTERM_GOOGLE_CLIENT_SECRET: ${{ secrets.QTERM_GOOGLE_CLIENT_SECRET }}
+        run: publish.cmd
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QTerm-win-v${{ steps.ver.outputs.version }}
+          path: windows/publish/
+
+      - name: Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "win-v${{ steps.ver.outputs.version }}"
+          $zip = "QTerm-win-v${{ steps.ver.outputs.version }}.zip"
+          Copy-Item QTerm-win-portable.zip $zip
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip --clobber
+          } else {
+            gh release create $tag $zip --title "QTerm Windows ${{ steps.ver.outputs.version }}" --notes "Сборка $env:GITHUB_SHA. Папку из архива держать целиком: Assets рядом с QTerm.exe." --target $env:GITHUB_SHA
+          }
+          exit 0

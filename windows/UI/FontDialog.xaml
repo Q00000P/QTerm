@@ -1,0 +1,26 @@
+﻿<Window x:Class="QTermWin.UI.FontDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Шрифт и терминал" Width="420" SizeToContent="Height"
+        Background="{DynamicResource BgBrush}" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <StackPanel Margin="16">
+        <TextBlock Text="Шрифт интерфейса" Foreground="{DynamicResource DimBrush}" Margin="0,0,0,4"/>
+        <ComboBox x:Name="FamilyBox" SelectionChanged="Live_Changed"/>
+        <TextBlock Text="Размер интерфейса" Foreground="{DynamicResource DimBrush}" Margin="0,12,0,4"/>
+        <ComboBox x:Name="SizeBox" SelectionChanged="Live_Changed"/>
+        <TextBlock Text="Размер шрифта терминала" Foreground="{DynamicResource DimBrush}" Margin="0,12,0,4"/>
+        <ComboBox x:Name="TermSizeBox" SelectionChanged="Live_Changed"/>
+        <TextBlock Text="Строк истории терминала (50…1 000 000)" Foreground="{DynamicResource DimBrush}" Margin="0,12,0,4"/>
+        <DockPanel>
+            <Button Content="Применить" Click="Scrollback_Apply" DockPanel.Dock="Right" Margin="8,0,0,0"/>
+            <TextBox x:Name="ScrollbackBox" Padding="6"/>
+        </DockPanel>
+        <TextBlock x:Name="Preview" Text="Пример: root@10.0.0.1 · config.yaml · 18,9 КБ"
+                   Foreground="{DynamicResource FgBrush}" Margin="0,14,0,0"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Сброс" Click="Reset_Click" Margin="0,0,8,0" MinWidth="80"/>
+            <Button Content="Готово" Click="Ok_Click" MinWidth="90"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QDiffLight" extensions=".diff;.patch" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Added" foreground="#098658"/>
+  <Color name="Removed" foreground="#C72E0F"/>
+  <Color name="Hunk" foreground="#0070C1"/>
+  <Color name="Comment" foreground="#008000" fontStyle="italic"/>
+  <RuleSet>
+    <Rule color="Hunk">^@@.*$|^(---|\+\+\+) .*$</Rule>
+    <Rule color="Added">^\+.*$</Rule>
+    <Rule color="Removed">^-.*$</Rule>
+    <Rule color="Comment">^(diff|index|Сравнение) .*$</Rule>
+  </RuleSet>
+</SyntaxDefinition>

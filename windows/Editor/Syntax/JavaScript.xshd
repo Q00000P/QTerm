@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QJavaScript" extensions=".js;.ts" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#6A9955" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Keyword" foreground="#569CD6"/>
+  <Color name="Control" foreground="#C586C0"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Func" foreground="#DCDCAA"/>
+  <Color name="Const" foreground="#569CD6"/>
+  <Color name="Type" foreground="#4EC9B0"/>
+  <RuleSet>
+    <Span color="Comment" begin="//" />
+    <Span color="Comment" multiline="true"><Begin>/*</Begin><End>*/</End></Span>
+    <Span color="String"><Begin>"</Begin><End>"</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String"><Begin>'</Begin><End>'</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String" multiline="true"><Begin>`</Begin><End>`</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Keywords color="Control"><Word>if</Word><Word>else</Word><Word>for</Word><Word>while</Word><Word>do</Word><Word>switch</Word><Word>case</Word><Word>default</Word><Word>break</Word><Word>continue</Word><Word>return</Word><Word>try</Word><Word>catch</Word><Word>finally</Word><Word>throw</Word><Word>import</Word><Word>export</Word><Word>from</Word><Word>await</Word><Word>yield</Word></Keywords>
+    <Keywords color="Keyword"><Word>var</Word><Word>let</Word><Word>const</Word><Word>function</Word><Word>class</Word><Word>extends</Word><Word>new</Word><Word>delete</Word><Word>typeof</Word><Word>instanceof</Word><Word>in</Word><Word>of</Word><Word>this</Word><Word>super</Word><Word>async</Word><Word>static</Word><Word>get</Word><Word>set</Word><Word>interface</Word><Word>type</Word><Word>enum</Word><Word>implements</Word><Word>public</Word><Word>private</Word><Word>protected</Word><Word>readonly</Word></Keywords>
+    <Keywords color="Const"><Word>true</Word><Word>false</Word><Word>null</Word><Word>undefined</Word><Word>NaN</Word><Word>Infinity</Word></Keywords>
+    <Rule color="Func">\b[A-Za-z_$][\w$]*(?=\s*\()</Rule>
+    <Rule color="Number">\b0[xX][0-9a-fA-F]+\b|\b\d+(\.\d+)?([eE][+-]?\d+)?\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>

@@ -1,0 +1,51 @@
+﻿<Window x:Class="QTermWin.UI.CmdLogWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Журнал команд" Width="720" Height="560"
+        Background="{DynamicResource BgBrush}"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <!-- Сегмент Журнал | Словарь (мак-канон) -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button x:Name="SegLog" Content="Журнал" Click="SegLog_Click" MinWidth="100"/>
+            <Button x:Name="SegDict" Content="Словарь" Click="SegDict_Click" MinWidth="100" Margin="6,0,0,0"/>
+        </StackPanel>
+        <TextBox x:Name="SearchBox" Grid.Row="1" Padding="6" TextChanged="Search_Changed"/>
+        <ListView x:Name="LogList" Grid.Row="2" Margin="0,8,0,8"
+                  Background="{DynamicResource PanelBrush}"
+                  Foreground="{DynamicResource FgBrush}"
+                  BorderBrush="{DynamicResource BorderDim}" BorderThickness="1">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="Команда" Width="330" DisplayMemberBinding="{Binding Cmd}"/>
+                    <GridViewColumn x:Name="ColCount" Header="×" Width="50" DisplayMemberBinding="{Binding Count}"/>
+                    <GridViewColumn x:Name="ColLast" Header="Последняя" Width="150" DisplayMemberBinding="{Binding Last}"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
+        <!-- Низ: журнал -->
+        <DockPanel x:Name="LogBar" Grid.Row="3">
+            <Button Content="Очистить журнал" Click="Clear_Click" DockPanel.Dock="Right"/>
+            <Button Content="Удалить выбранную" Click="Delete_Click" DockPanel.Dock="Right" Margin="0,0,8,0"/>
+            <Button Content="Почистить мусор" Click="Sanitize_Click" DockPanel.Dock="Right" Margin="0,0,8,0"
+                    ToolTip="Пароли, токены, ключи, куски вставок — в tombstone (удаление уедет на все устройства)"/>
+            <Button Content="→ в словарь" Click="ToDict_Click" DockPanel.Dock="Right" Margin="0,0,8,0"
+                    ToolTip="Выбранную команду журнала — в свой словарь (зелёные подсказки на всех устройствах)"/>
+            <TextBlock x:Name="CountLabel" Foreground="{DynamicResource DimBrush}" VerticalAlignment="Center"/>
+        </DockPanel>
+        <!-- Низ: словарь -->
+        <DockPanel x:Name="DictBar" Grid.Row="3" Visibility="Collapsed">
+            <Button Content="Скрыть/удалить" Click="DictRemove_Click" DockPanel.Dock="Right"
+                    ToolTip="Встроенную — скрыть, свою — удалить (уедет синком)"/>
+            <Button Content="Добавить" Click="DictAdd_Click" DockPanel.Dock="Right" Margin="0,0,8,0"/>
+            <TextBox x:Name="NewDictBox" Padding="6" Margin="0,0,8,0"
+                     ToolTip="Своя команда в словарь"/>
+        </DockPanel>
+    </Grid>
+</Window>

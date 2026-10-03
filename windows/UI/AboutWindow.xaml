@@ -1,0 +1,20 @@
+﻿<Window x:Class="QTermWin.UI.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="О приложении" Width="440" SizeToContent="Height"
+        Background="{DynamicResource BgBrush}" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <StackPanel Margin="20">
+        <TextBlock Text="QTerm" FontSize="26" FontWeight="SemiBold"
+                   Foreground="{DynamicResource FgBrush}"/>
+        <TextBlock x:Name="VerText" Foreground="{DynamicResource DimBrush}" Margin="0,2,0,12"/>
+        <TextBlock Foreground="{DynamicResource FgBrush}" TextWrapping="Wrap"
+                   Text="SSH-клиент со сквозным шифрованным синком вейлта между macOS, Android и Windows: ноды, ключи, сниппеты, журнал команд и доверие хостам — одни на всех устройствах."/>
+        <TextBlock Margin="0,10,0,0" Foreground="{DynamicResource FgBrush}" TextWrapping="Wrap"
+                   Text="Терминал · SFTP/exec-проводник · редактор · мониторинг · подсказки команд · WYSIWYG-броадкаст · авто-реконнект · PPK-конвертер · ssh-agent/Pageant · Windows Hello"/>
+        <TextBlock Margin="0,12,0,0" Foreground="{DynamicResource DimBrush}"
+                   Text="github.com/Q00000P — QTerm (mac) · QTermAndroid · QTermWindows"/>
+        <Button Content="Закрыть" Click="Close_Click" HorizontalAlignment="Right"
+                Margin="0,16,0,0" MinWidth="90"/>
+    </StackPanel>
+</Window>

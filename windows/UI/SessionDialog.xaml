@@ -1,0 +1,61 @@
+﻿<Window x:Class="QTermWin.UI.SessionDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Нода" Width="440" SizeToContent="Height"
+        Background="{DynamicResource BgBrush}" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="Margin" Value="0,8,0,2"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="Padding" Value="5"/>
+        </Style>
+    </Window.Resources>
+    <StackPanel Margin="16">
+        <TextBlock Text="Имя"/>
+        <TextBox x:Name="NameBox"/>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="90"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Хост"/>
+                <TextBox x:Name="HostBox"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="Порт"/>
+                <TextBox x:Name="PortBox" Text="22"/>
+            </StackPanel>
+        </Grid>
+        <TextBlock Text="Пользователь"/>
+        <TextBox x:Name="UserBox"/>
+        <TextBlock Text="Аутентификация"/>
+        <ComboBox x:Name="AuthCombo" SelectionChanged="AuthCombo_Changed">
+            <ComboBoxItem Content="Пароль"/>
+            <ComboBoxItem Content="Ключ из вейлта"/>
+            <ComboBoxItem Content="SSH-агент"/>
+        </ComboBox>
+        <TextBlock x:Name="KeyLabel" Text="Ключ"/>
+        <ComboBox x:Name="KeyCombo"/>
+        <TextBlock x:Name="PwLabel" Text="Пароль (пусто — не менять)"/>
+        <PasswordBox x:Name="PwBox" Padding="5"
+                     Background="{DynamicResource PanelBrush}"
+                     Foreground="{DynamicResource FgBrush}"
+                     BorderBrush="{DynamicResource BorderDim}"/>
+        <TextBlock Text="Стартовый каталог терминала (termPath, опционально)"/>
+        <TextBox x:Name="TermPathBox"/>
+        <TextBlock Text="Стартовый путь проводника (sftpPath, опционально)"/>
+        <TextBox x:Name="SftpPathBox"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Отмена" Click="Cancel_Click" Margin="0,0,8,0" MinWidth="90"/>
+            <Button Content="Сохранить" Click="Ok_Click" MinWidth="90" IsDefault="True"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

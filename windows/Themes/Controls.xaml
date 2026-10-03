@@ -1,0 +1,470 @@
+﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Общие стили QTerm + QEditor. Цвета — ТОЛЬКО через DynamicResource из
+         палитры Colors.Dark/Colors.Light: тема меняется на лету -->
+        <!-- ── Шрифт: Segoe UI Variable (Win11), крупнее и современнее ── -->
+        <Style TargetType="Window">
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontSize" Value="13.5"/>
+            <Setter Property="UseLayoutRounding" Value="True"/>
+            <Setter Property="TextOptions.TextFormattingMode" Value="Ideal"/>
+        </Style>
+
+        <!-- ── Кнопки: плоские, скруглённые, ховер/прессед ── -->
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource Panel2Brush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="7" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource HoverEdge}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── Поля ввода ── -->
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="PasswordBox">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── Меню: тёмные, скруглённые, БЕЗ белой колонки иконок ── -->
+        <Style TargetType="ContextMenu">
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Background" Value="{DynamicResource Panel2Brush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="8" Padding="4">
+                            <StackPanel IsItemsHost="True"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- ── Меню: полный набор шаблонов по Role — строка меню (TopLevel*),
+             пункты с иконкой/галкой/горячей клавишей, подменю со стрелкой ── -->
+        <Style TargetType="Menu">
+            <Setter Property="Background" Value="{DynamicResource BgBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="Padding" Value="4,2"/>
+        </Style>
+
+        <ControlTemplate x:Key="MiTopHeader" TargetType="MenuItem">
+            <Grid>
+                <Border x:Name="Bd" Background="Transparent" CornerRadius="5" Padding="10,4">
+                    <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
+                </Border>
+                <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsSubmenuOpen}" Placement="Bottom"
+                       AllowsTransparency="True" Focusable="False" PopupAnimation="Fade" VerticalOffset="2">
+                    <Border Background="{DynamicResource Panel2Brush}" BorderBrush="{DynamicResource BorderDim}"
+                            BorderThickness="1" CornerRadius="8" Padding="4" MinWidth="200"
+                            TextElement.FontFamily="{TemplateBinding FontFamily}"
+                            TextElement.FontSize="{TemplateBinding FontSize}"
+                            TextElement.Foreground="{DynamicResource FgBrush}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="640">
+                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </ScrollViewer>
+                    </Border>
+                </Popup>
+            </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}"/>
+                </Trigger>
+                <Trigger Property="IsSubmenuOpen" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <ControlTemplate x:Key="MiTopItem" TargetType="MenuItem">
+            <Border x:Name="Bd" Background="Transparent" CornerRadius="5" Padding="10,4">
+                <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <ControlTemplate x:Key="MiSubItem" TargetType="MenuItem">
+            <Border x:Name="Bd" Background="Transparent" CornerRadius="5" Padding="6,5,10,5">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="26"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <ContentPresenter x:Name="Ico" ContentSource="Icon" HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"/>
+                    <TextBlock x:Name="Check" Text="✓" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{DynamicResource AccentBrush}" Visibility="Collapsed"/>
+                    <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True"
+                                      VerticalAlignment="Center" Margin="2,0,0,0"/>
+                    <TextBlock Grid.Column="2" Text="{TemplateBinding InputGestureText}" Margin="28,0,0,0"
+                               Foreground="{DynamicResource DimBrush}" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                </Trigger>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
+                    <Setter TargetName="Ico" Property="Visibility" Value="Collapsed"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <ControlTemplate x:Key="MiSubHeader" TargetType="MenuItem">
+            <Grid>
+                <Border x:Name="Bd" Background="Transparent" CornerRadius="5" Padding="6,5,8,5">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="26"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <ContentPresenter ContentSource="Icon" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True"
+                                          VerticalAlignment="Center" Margin="2,0,0,0"/>
+                        <TextBlock Grid.Column="2" Text="›" FontSize="15" Margin="28,0,0,0"
+                                   Foreground="{DynamicResource DimBrush}" VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+                <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsSubmenuOpen}" Placement="Right"
+                       AllowsTransparency="True" Focusable="False" PopupAnimation="Fade" HorizontalOffset="4">
+                    <Border Background="{DynamicResource Panel2Brush}" BorderBrush="{DynamicResource BorderDim}"
+                            BorderThickness="1" CornerRadius="8" Padding="4" MinWidth="180"
+                            TextElement.FontFamily="{TemplateBinding FontFamily}"
+                            TextElement.FontSize="{TemplateBinding FontSize}"
+                            TextElement.Foreground="{DynamicResource FgBrush}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="640">
+                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </ScrollViewer>
+                    </Border>
+                </Popup>
+            </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <Style TargetType="MenuItem">
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="Template" Value="{StaticResource MiSubItem}"/>
+            <Style.Triggers>
+                <Trigger Property="Role" Value="TopLevelHeader">
+                    <Setter Property="Template" Value="{StaticResource MiTopHeader}"/>
+                </Trigger>
+                <Trigger Property="Role" Value="TopLevelItem">
+                    <Setter Property="Template" Value="{StaticResource MiTopItem}"/>
+                </Trigger>
+                <Trigger Property="Role" Value="SubmenuHeader">
+                    <Setter Property="Template" Value="{StaticResource MiSubHeader}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Background="{DynamicResource BorderDim}" Margin="8,4"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Separator">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Background="{DynamicResource BorderDim}" Margin="8,4"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── ToolTip ── -->
+        <Style TargetType="ToolTip">
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Background" Value="{DynamicResource Panel2Brush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── Тонкие тёмные скроллбары ── -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Width" Value="9"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="Transparent">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border Background="{DynamicResource ThumbBrush}" CornerRadius="4" Margin="2,0"/>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter Property="Width" Value="Auto"/>
+                                <Setter Property="Height" Value="9"/>
+                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── Списки (из волны 4, на новой палитре) ── -->
+        <Style TargetType="GridViewColumnHeader">
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Background" Value="{DynamicResource Panel2Brush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="0,0,1,1"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GridViewColumnHeader">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ListViewItem">
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="Padding" Value="4,3"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListViewItem">
+                        <Border x:Name="Bd" Background="Transparent" Padding="{TemplateBinding Padding}">
+                            <GridViewRowPresenter Content="{TemplateBinding Content}"
+                                                  Columns="{TemplateBinding GridView.ColumnCollection}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ListBoxItem">
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="Padding" Value="2"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="6"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── Комбо: полный тёмный шаблон ── -->
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="5"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="1" CornerRadius="6"/>
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              VerticalAlignment="Center" IsHitTestVisible="False"/>
+                            <Path Data="M0,0 L4,4 L8,0" Stroke="{DynamicResource DimBrush}"
+                                  StrokeThickness="1.6" HorizontalAlignment="Right"
+                                  VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <ToggleButton IsChecked="{Binding IsDropDownOpen, Mode=TwoWay,
+                                              RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press" Focusable="False"
+                                          Background="Transparent" BorderThickness="0"
+                                          Opacity="0"/>
+                            <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True" Placement="Bottom"
+                                   PopupAnimation="Fade" StaysOpen="False">
+                                <Border Background="{DynamicResource Panel2Brush}"
+                                        BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+                                        CornerRadius="8" Padding="4" Margin="0,4,0,0"
+                                        MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <ScrollViewer>
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </ResourceDictionary>

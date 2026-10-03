@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QJSON" extensions=".json;.jsonc" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#6A9955" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Key" foreground="#9CDCFE"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Const" foreground="#569CD6"/>
+  <Color name="Punct" foreground="#808080"/>
+  <RuleSet>
+    <Span color="Comment" begin="//" />
+    <Rule color="Key">"(?:[^"\\]|\\.)*"(?=\s*:)</Rule>
+    <Span color="String"><Begin>"</Begin><End>"</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Keywords color="Const"><Word>true</Word><Word>false</Word><Word>null</Word></Keywords>
+    <Rule color="Number">-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b</Rule>
+    <Rule color="Punct">[{}\[\],:]</Rule>
+  </RuleSet>
+</SyntaxDefinition>

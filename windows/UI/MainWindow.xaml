@@ -1,0 +1,313 @@
+﻿<Window x:Class="QTermWin.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="QTerm" Height="860" Width="1440"
+        Background="{DynamicResource BgBrush}"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="300" MinWidth="220" MaxWidth="600"/>
+            <ColumnDefinition Width="4"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition x:Name="FilesSplitCol" Width="0"/>
+            <ColumnDefinition x:Name="FilesCol" Width="0" MaxWidth="800"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Левая панель: ноды -->
+        <Grid Grid.Column="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Margin="10,10,10,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="＋ Нода" Click="NodeAdd_Click"
+                        HorizontalAlignment="Stretch" Margin="0,0,6,0"/>
+                <Button Grid.Column="1" Content="Синк" Click="SyncButton_Click" Margin="0,0,6,0"/>
+                <Button Grid.Column="2" x:Name="MoreButton" Content="⋮" Click="MoreButton_Click" MinWidth="34"/>
+            </Grid>
+            <ListBox x:Name="SessionList" Grid.Row="1" Margin="10,0,10,0"
+                     Background="{DynamicResource PanelBrush}"
+                     Foreground="{DynamicResource FgBrush}"
+                     BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+                     MouseDoubleClick="SessionList_MouseDoubleClick"
+                     HorizontalContentAlignment="Stretch"
+                     AllowDrop="True"
+                     PreviewMouseLeftButtonDown="SessionList_PreviewMouseDown"
+                     PreviewMouseMove="SessionList_PreviewMouseMove"
+                     Drop="SessionList_Drop">
+                <ListBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Подключить" Click="NodeConnect_Click"/>
+                        <MenuItem Header="Изменить" Click="NodeEdit_Click"/>
+                        <MenuItem Header="Отключить" Click="NodeDisconnect_Click"/>
+                        <MenuItem Header="Сбросить доверие" Click="NodeResetTrust_Click"/>
+                        <MenuItem Header="Забыть пароль" Click="NodeForgetPassword_Click"/>
+                        <MenuItem Header="Отвязать ключи" Click="NodeUnbindKeys_Click"/>
+                        <MenuItem Header="Удалить" Click="NodeDelete_Click"/>
+                    </ContextMenu>
+                </ListBox.ContextMenu>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Margin="4,3">
+                            <TextBlock Text="{Binding Name}" FontSize="14"/>
+                            <TextBlock Text="{Binding Address}" FontSize="11.5"
+                                       Foreground="{DynamicResource DimBrush}"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock x:Name="CountLabel" Grid.Row="2" Margin="12,6,12,10"
+                       Foreground="{DynamicResource DimBrush}"/>
+        </Grid>
+
+        <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch"
+                      Background="{DynamicResource BorderDim}"/>
+
+        <!-- Правая часть: вкладки + терминал/редакторы -->
+        <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Полоса потери соединения (андроид-канон) -->
+            <Border Grid.Row="1" x:Name="ReconnectBar" Margin="6,4,6,0" Padding="8,4"
+                    Background="{DynamicResource DangerBgBrush}" BorderBrush="{DynamicResource DangerEdgeBrush}" BorderThickness="1"
+                    CornerRadius="4" Visibility="Collapsed">
+                <DockPanel>
+                    <Button Content="Переподключить" Click="ReconnectNow_Click" DockPanel.Dock="Right"/>
+                    <TextBlock x:Name="ReconnectText" Text="Соединение потеряно"
+                               Foreground="{DynamicResource FgBrush}" VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+
+            <DockPanel Grid.Row="0" Margin="6,6,6,0">
+                <Button x:Name="FilesButton" DockPanel.Dock="Right" Content="Файлы"
+                        Click="FilesButton_Click" Margin="4,0,0,0" VerticalAlignment="Top"/>
+                <Button x:Name="SnippetsButton" DockPanel.Dock="Right" Content="Команды"
+                        Click="SnippetsButton_Click" Margin="4,0,0,0" VerticalAlignment="Top"/>
+                <Button x:Name="GitButton" DockPanel.Dock="Right" Content="Git"
+                        Click="GitButton_Click" MouseRightButtonUp="GitButton_RightClick"
+                        Margin="4,0,0,0" VerticalAlignment="Top"/>
+                <Button x:Name="ClearButton" DockPanel.Dock="Right" Content="Очистить"
+                        Click="ClearTerm_Click" Margin="4,0,0,0" VerticalAlignment="Top"/>
+                <Button x:Name="BroadcastButton" DockPanel.Dock="Right" Content="Во все"
+                        Click="Broadcast_Click" Margin="4,0,0,0" VerticalAlignment="Top"
+                        ToolTip="Сквозной ввод: клавиатура летит во все терминалы. ОСТОРОЖНО со стрелками/Tab — каждая нода подставит СВОЮ историю. Одинаковое везде — набор, вставка или сниппет из «Команд»"/>
+                <ItemsControl x:Name="TabStrip">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{Binding TabBrush}" CornerRadius="6,6,0,0"
+                                BorderBrush="{DynamicResource BorderDim}" BorderThickness="1,1,1,0"
+                                Margin="0,0,4,0" Padding="10,5"
+                                MouseLeftButtonDown="Tab_Click" MouseRightButtonUp="Tab_RightClick" Tag="{Binding Id}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="●" Foreground="{Binding DotBrush}" Margin="0,0,6,0"/>
+                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource FgBrush}"/>
+                                <TextBlock Text="✕" Margin="10,0,0,0"
+                                           Foreground="{DynamicResource DimBrush}"
+                                           MouseLeftButtonDown="TabClose_Click" Tag="{Binding Id}"/>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </DockPanel>
+
+            <Border Grid.Row="2" Margin="6,0,6,0"
+                    BorderBrush="{DynamicResource BorderDim}" BorderThickness="1">
+                <Grid>
+                    <wv2:WebView2 x:Name="Web" DefaultBackgroundColor="#1E1F22"/>
+                    <TextBlock x:Name="Placeholder" Text="Даблклик по ноде — открыть терминал"
+                               Foreground="{DynamicResource DimBrush}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <!-- Панель мониторинга (моба-стиль), для активной терминальной вкладки -->
+            <Border Grid.Row="3" Margin="6,0,6,6" x:Name="MonitorBar"
+                    Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource BorderDim}" BorderThickness="1,0,1,1"
+                    Visibility="Collapsed">
+                <WrapPanel x:Name="MonitorPanel" Margin="6,3"/>
+            </Border>
+        </Grid>
+
+        <GridSplitter x:Name="FilesSplitter" Grid.Column="3" HorizontalAlignment="Stretch"
+                      Background="{DynamicResource BorderDim}" Visibility="Collapsed"/>
+
+        <!-- Файловая панель (привязана к терминальной вкладке _filesTab), мобовская -->
+        <Grid Grid.Column="4" Margin="0,6,6,6">
+            <Grid.Resources>
+                <!-- Иконка-кнопка тулбара -->
+                <Style x:Key="FsTool" TargetType="Button">
+                    <Setter Property="Width" Value="30"/>
+                    <Setter Property="Height" Value="30"/>
+                    <Setter Property="Margin" Value="0,0,2,2"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Setter Property="Cursor" Value="Hand"/>
+                    <Setter Property="Focusable" Value="False"/>
+                    <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
+                    <Setter Property="FontSize" Value="15"/>
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="BorderBrush" Value="Transparent"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                        CornerRadius="5">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}"/>
+                                        <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource HoverEdge}"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                                    </Trigger>
+                                    <Trigger Property="IsEnabled" Value="False">
+                                        <Setter Property="Opacity" Value="0.4"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Grid.Resources>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Тулбар (как у мобы: вверх, скачать, залить, обновить, папка, файл, удалить, права, редактор, …) -->
+            <WrapPanel x:Name="FsToolbar" Grid.Row="0" Margin="0,0,0,4">
+                <Button Style="{StaticResource FsTool}" Click="FsUp_Click" ToolTip="Вверх (Backspace)">
+                    <TextBlock Text="&#xE74A;" Foreground="#4FA3E3"/></Button>
+                <Button Style="{StaticResource FsTool}" Click="FsDownload_Click" ToolTip="Скачать выделенное (файлы и папки)">
+                    <TextBlock Text="&#xE896;" Foreground="#4FA3E3"/></Button>
+                <Button Style="{StaticResource FsTool}" Click="FsUpload_Click" ToolTip="Залить файлы в текущую папку (или перетащи из проводника)">
+                    <TextBlock Text="&#xE898;" Foreground="#3FB950"/></Button>
+                <Button Style="{StaticResource FsTool}" Click="FsRefresh_Click" ToolTip="Обновить (F5)">
+                    <TextBlock Text="&#xE72C;" Foreground="#3FB950"/></Button>
+                <Button Style="{StaticResource FsTool}" Click="FsMkdir_Click" ToolTip="Новая папка">
+                    <TextBlock Text="&#xE8F4;" Foreground="#E8B44C"/></Button>
+                <Button Style="{StaticResource FsTool}" Click="FsNewFile_Click" ToolTip="Новый файл (откроется в QEditor)">
+                    <TextBlock Text="&#xE8A5;" Foreground="#B0B6BF"/></Button>
+                <Button Style="{StaticResource FsTool}" Click="FsDelete_Click" ToolTip="Удалить выделенное (Del)">
+                    <TextBlock Text="&#xE74D;" Foreground="#E5534B"/></Button>
+                <Button Style="{StaticResource FsTool}" Click="FsChmod_Click" ToolTip="Права (chmod)">
+                    <TextBlock Text="&#xE8D7;" Foreground="#E8B44C"/></Button>
+                <Button Style="{StaticResource FsTool}" Click="FsOpenEditor_Click" ToolTip="Открыть в QEditor (Enter)">
+                    <TextBlock Text="&#xE70F;" Foreground="#4FA3E3"/></Button>
+                <Button x:Name="FsHiddenBtn" Style="{StaticResource FsTool}" Click="FsHidden_Click" ToolTip="Скрытые файлы (.dot): показать/спрятать">
+                    <TextBlock Text="&#xE890;" Foreground="#A371F7"/></Button>
+                <Button Style="{StaticResource FsTool}" Click="FsSetStart_Click" ToolTip="Сделать текущую папку стартовой для ноды (синкается)">
+                    <TextBlock Text="&#xE718;" Foreground="#DB6D28"/></Button>
+                <Button Style="{StaticResource FsTool}" Click="FsCdHere_Click" ToolTip="Перейти в терминале в эту папку (cd)">
+                    <TextBlock Text="&#xE756;" Foreground="#B0B6BF"/></Button>
+            </WrapPanel>
+
+            <!-- Путь + история -->
+            <DockPanel Grid.Row="1" Margin="0,0,0,4">
+                <Button x:Name="FsHistoryBtn" Content="▾" Click="FsHistory_Click" DockPanel.Dock="Right"
+                        Margin="4,0,0,0" MinWidth="30" Padding="6,4" ToolTip="Недавние папки"/>
+                <TextBox x:Name="FsPath" Padding="5" KeyDown="FsPath_KeyDown"
+                         Background="{DynamicResource PanelBrush}"
+                         Foreground="{DynamicResource FgBrush}"
+                         BorderBrush="{DynamicResource BorderDim}"
+                         ToolTip="Путь — Enter для перехода"/>
+            </DockPanel>
+
+            <ListView x:Name="FsList" Grid.Row="2" SelectionMode="Extended" AllowDrop="True"
+                      FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="14"
+                      Background="{DynamicResource PanelBrush}"
+                      Foreground="{DynamicResource FgBrush}"
+                      BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+                      MouseDoubleClick="FsList_MouseDoubleClick"
+                      PreviewKeyDown="FsList_PreviewKeyDown"
+                      PreviewMouseDown="FsList_PreviewMouseDown"
+                      PreviewMouseMove="FsList_PreviewMouseMove"
+                      ContextMenuOpening="FsList_ContextMenuOpening"
+                      DragOver="FsList_DragOver" Drop="FsList_Drop"
+                      GridViewColumnHeader.Click="FsList_HeaderClick">
+                <ListView.ContextMenu>
+                    <ContextMenu/>
+                </ListView.ContextMenu>
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Имя" Width="200">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Opacity="{Binding Dim}">
+                                        <TextBlock Text="{Binding Glyph}" Foreground="{Binding IconBrush}"
+                                                   FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15"
+                                                   Width="22" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Размер" Width="78">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding SizeText}" TextAlignment="Right" MinWidth="60"
+                                               Foreground="{DynamicResource DimBrush}"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Дата" Width="112">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Modified}" Foreground="{DynamicResource DimBrush}"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Права" Width="92">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Perms}" FontFamily="Cascadia Mono, Consolas" FontSize="12"
+                                               Foreground="{DynamicResource DimBrush}" VerticalAlignment="Center"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Владелец" Width="90">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Owner}" Foreground="{DynamicResource DimBrush}"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+
+            <!-- Низ: как у мобы -->
+            <StackPanel Grid.Row="3" Margin="2,6,0,0">
+                <CheckBox x:Name="FsFollowBox" Content="Следовать за папкой терминала"
+                          Foreground="{DynamicResource FgBrush}" Click="FsFollow_Click"
+                          ToolTip="Панель переходит туда, куда ты сделал cd (по заголовку окна шелла / OSC 7)"/>
+            </StackPanel>
+
+            <TextBlock x:Name="FsStatus" Grid.Row="4" Foreground="{DynamicResource DimBrush}"
+                       Margin="2,4,0,0" Text="" TextTrimming="CharacterEllipsis"/>
+        </Grid>
+    </Grid>
+</Window>

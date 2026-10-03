@@ -1,0 +1,48 @@
+﻿<Window x:Class="QTermWin.UI.FilePropsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Свойства" Width="440" SizeToContent="Height"
+        Background="{DynamicResource BgBrush}" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="110"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.Resources>
+            <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+                <Setter Property="Margin" Value="0,4"/>
+            </Style>
+        </Grid.Resources>
+        <TextBlock Grid.Row="0" Text="Имя" Foreground="{DynamicResource DimBrush}"/>
+        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="NameT" TextWrapping="Wrap"/>
+        <TextBlock Grid.Row="1" Text="Путь" Foreground="{DynamicResource DimBrush}"/>
+        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="PathT" TextWrapping="Wrap"/>
+        <TextBlock Grid.Row="2" Text="Тип" Foreground="{DynamicResource DimBrush}"/>
+        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="TypeT"/>
+        <TextBlock Grid.Row="3" Text="Размер" Foreground="{DynamicResource DimBrush}"/>
+        <TextBlock Grid.Row="3" Grid.Column="1" x:Name="SizeT"/>
+        <TextBlock Grid.Row="4" Text="Изменён" Foreground="{DynamicResource DimBrush}"/>
+        <TextBlock Grid.Row="4" Grid.Column="1" x:Name="ModT"/>
+        <TextBlock Grid.Row="5" Text="Владелец" Foreground="{DynamicResource DimBrush}"/>
+        <TextBlock Grid.Row="5" Grid.Column="1" x:Name="OwnerT"/>
+        <TextBlock Grid.Row="6" Text="Права" Foreground="{DynamicResource DimBrush}"/>
+        <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal">
+            <TextBlock x:Name="PermsT" FontFamily="Cascadia Mono, Consolas" Margin="0,4,10,4"/>
+            <TextBox x:Name="OctalBox" Width="60" Padding="4" VerticalAlignment="Center"
+                     Background="{DynamicResource PanelBrush}"
+                     Foreground="{DynamicResource FgBrush}"
+                     BorderBrush="{DynamicResource BorderDim}"/>
+        </StackPanel>
+        <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Закрыть" Click="Close_Click" Margin="0,0,8,0" MinWidth="90"/>
+            <Button x:Name="ApplyBtn" Content="Применить права" Click="Apply_Click" MinWidth="120"/>
+        </StackPanel>
+    </Grid>
+</Window>

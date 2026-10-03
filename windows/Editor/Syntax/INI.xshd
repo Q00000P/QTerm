@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QINI" extensions=".ini;.cfg;.toml;.env;.properties" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#6A9955" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Key" foreground="#9CDCFE"/>
+  <Color name="Section" foreground="#4EC9B0" fontWeight="bold"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Const" foreground="#569CD6"/>
+  <RuleSet>
+    <Span color="Comment" begin="^\s*[;#]" />
+    <Rule color="Section">^\s*\[[^\]]*\]</Rule>
+    <Rule color="Key">^\s*[^=:\s#;][^=:]*?(?=\s*[=:])</Rule>
+    <Span color="String"><Begin>"</Begin><End>"</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String"><Begin>'</Begin><End>'</End></Span>
+    <Keywords color="Const"><Word>true</Word><Word>false</Word><Word>yes</Word><Word>no</Word><Word>on</Word><Word>off</Word><Word>True</Word><Word>False</Word></Keywords>
+    <Rule color="Number">\b\d+(\.\d+)?\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>

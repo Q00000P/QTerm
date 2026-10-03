@@ -1,0 +1,191 @@
+﻿<Window x:Class="QEditor.EditorHostWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="QEditor" Width="1100" Height="760" MinWidth="560" MinHeight="360"
+        Background="{DynamicResource BgBrush}" AllowDrop="True">
+    <Window.Resources>
+        <!-- Кнопка тулбара: плоская, иконка-глиф -->
+        <Style x:Key="ToolBtn" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Width" Value="32"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Margin" Value="1,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets, Segoe UI Symbol"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.35"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- Переключатель-«чип» в строке поиска: Aa / Слово / .* -->
+        <Style x:Key="Chip" TargetType="ToggleButton">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="8,3"/>
+            <Setter Property="Margin" Value="2,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="5"
+                                BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="StatusItem" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="Margin" Value="12,0,0,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="FontSize" Value="12.5"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+        <Menu x:Name="MenuBar" DockPanel.Dock="Top"/>
+
+        <Border x:Name="ToolBarHost" DockPanel.Dock="Top" Background="{DynamicResource PanelBrush}"
+                BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,1,0,1" Padding="6,3">
+            <WrapPanel x:Name="ToolBarPanel"/>
+        </Border>
+
+        <!-- Вкладки — отдельной строкой, ничем не перекрываются -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource BgBrush}" Padding="6,6,6,0">
+            <ItemsControl x:Name="TabStrip">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{Binding TabBrush}" CornerRadius="7,7,0,0"
+                                BorderBrush="{Binding TabBorder}" BorderThickness="1,1,1,0"
+                                Margin="0,0,3,0" Padding="10,5,6,5" Cursor="Hand" ToolTip="{Binding Tip}"
+                                Tag="{Binding Id}" MouseDown="Tab_MouseDown" MouseRightButtonUp="Tab_RightUp">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="7" Height="7" Fill="{DynamicResource DirtyBrush}" Margin="0,0,7,0"
+                                         Visibility="{Binding DirtyVis}" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding Glyph}" Margin="0,0,6,0" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource DimBrush}" FontSize="12"
+                                           FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets, Segoe UI Symbol"/>
+                                <TextBlock Text="{Binding Name}" Foreground="{Binding NameBrush}"
+                                           VerticalAlignment="Center"/>
+                                <Border Margin="8,0,0,0" CornerRadius="4" Width="18" Height="18"
+                                        Background="Transparent" Tag="{Binding Id}"
+                                        MouseLeftButtonUp="TabClose_Click">
+                                    <TextBlock Text="✕" FontSize="11" HorizontalAlignment="Center"
+                                               VerticalAlignment="Center" Foreground="{DynamicResource DimBrush}"/>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </Border>
+
+        <!-- Поиск / замена (Ctrl+F / Ctrl+H) -->
+        <Border x:Name="FindBar" DockPanel.Dock="Top" Visibility="Collapsed"
+                Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderDim}"
+                BorderThickness="0,1,0,1" Padding="8,6">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="320"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Text="Найти" Foreground="{DynamicResource DimBrush}" VerticalAlignment="Center"
+                           Margin="0,0,8,0" Width="64"/>
+                <TextBox x:Name="FindBox" Grid.Column="1" TextChanged="Find_Changed"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,0,0,0">
+                    <ToggleButton x:Name="CaseChip" Style="{StaticResource Chip}" Content="Aa"
+                                  ToolTip="Учитывать регистр" Click="FindOpt_Click"/>
+                    <ToggleButton x:Name="WordChip" Style="{StaticResource Chip}" Content="Слово"
+                                  ToolTip="Слово целиком" Click="FindOpt_Click"/>
+                    <ToggleButton x:Name="RegexChip" Style="{StaticResource Chip}" Content=".*"
+                                  ToolTip="Регулярное выражение (в замене работают $1, $2…)" Click="FindOpt_Click"/>
+                    <Button Content="↑" Click="FindPrev_Click" Margin="6,0,0,0" Padding="10,4"
+                            ToolTip="Предыдущее (Shift+F3)"/>
+                    <Button Content="↓" Click="FindNext_Click" Margin="4,0,0,0" Padding="10,4"
+                            ToolTip="Следующее (F3 / Enter)"/>
+                </StackPanel>
+                <DockPanel Grid.Column="3" LastChildFill="False">
+                    <TextBlock x:Name="FindCount" Foreground="{DynamicResource DimBrush}" VerticalAlignment="Center"
+                               Margin="12,0,0,0" DockPanel.Dock="Left"/>
+                    <Button Content="✕" Click="FindClose_Click" DockPanel.Dock="Right" Padding="9,4"
+                            ToolTip="Закрыть (Esc)"/>
+                </DockPanel>
+
+                <TextBlock x:Name="ReplaceLabel" Grid.Row="1" Text="Заменить" Foreground="{DynamicResource DimBrush}"
+                           VerticalAlignment="Center" Margin="0,6,8,0"/>
+                <TextBox x:Name="ReplaceBox" Grid.Row="1" Grid.Column="1" Margin="0,6,0,0"/>
+                <StackPanel x:Name="ReplaceButtons" Grid.Row="1" Grid.Column="2" Orientation="Horizontal" Margin="6,6,0,0">
+                    <Button Content="Заменить" Click="Replace_Click" Padding="10,4"/>
+                    <Button Content="Заменить все" Click="ReplaceAll_Click" Margin="4,0,0,0" Padding="10,4"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Статус-бар: позиция, выделение, нода, синтаксис, кодировка, концы строк -->
+        <Border x:Name="StatusBarHost" DockPanel.Dock="Bottom" Background="{DynamicResource PanelBrush}"
+                BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,1,0,0" Padding="10,4">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <TextBlock x:Name="StSyntax" Style="{StaticResource StatusItem}" Cursor="Hand"
+                               ToolTip="Синтаксис — клик для выбора" MouseLeftButtonUp="StSyntax_Click"/>
+                    <TextBlock x:Name="StEnc" Style="{StaticResource StatusItem}" Cursor="Hand"
+                               ToolTip="Кодировка — клик для выбора" MouseLeftButtonUp="StEnc_Click"/>
+                    <TextBlock x:Name="StEol" Style="{StaticResource StatusItem}" Cursor="Hand"
+                               ToolTip="Концы строк — клик для смены" MouseLeftButtonUp="StEol_Click"/>
+                    <TextBlock x:Name="StIns" Style="{StaticResource StatusItem}"/>
+                    <TextBlock x:Name="StZoom" Style="{StaticResource StatusItem}"/>
+                </StackPanel>
+                <TextBlock x:Name="StPos" Style="{StaticResource StatusItem}" Margin="0" Foreground="{DynamicResource FgBrush}"/>
+                <TextBlock x:Name="StInfo" Style="{StaticResource StatusItem}" TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
+        </Border>
+
+        <Grid Background="{DynamicResource EditorBgBrush}">
+            <TextBlock x:Name="EmptyHint" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextAlignment="Center" Foreground="{DynamicResource DimBrush}" FontSize="15" LineHeight="26"
+                       Text="Нет открытых файлов&#x0a;Ctrl+N — новый документ · Ctrl+O — открыть с диска&#x0a;Файлы нод открываются двойным кликом в QTerm"/>
+            <Grid x:Name="PaneHost"/>
+        </Grid>
+    </DockPanel>
+</Window>

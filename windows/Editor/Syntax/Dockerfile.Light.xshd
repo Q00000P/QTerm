@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QDockerfileLight" extensions=".dockerfile" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#008000" fontStyle="italic"/>
+  <Color name="String" foreground="#A31515"/>
+  <Color name="Keyword" foreground="#0000FF"/>
+  <Color name="Variable" foreground="#001080"/>
+  <Color name="Number" foreground="#098658"/>
+  <RuleSet>
+    <Span color="Comment" begin="^\s*#" />
+    <Span color="String"><Begin>"</Begin><End>"</End><RuleSet><Span begin="\\" end="."/></RuleSet></Span>
+    <Span color="String"><Begin>'</Begin><End>'</End></Span>
+    <Rule color="Variable">\$\{[^}]*\}|\$[A-Za-z_]\w*</Rule>
+    <Rule color="Keyword">(?i)^\s*(FROM|RUN|CMD|LABEL|MAINTAINER|EXPOSE|ENV|ADD|COPY|ENTRYPOINT|VOLUME|USER|WORKDIR|ARG|ONBUILD|STOPSIGNAL|HEALTHCHECK|SHELL|AS)\b</Rule>
+    <Rule color="Number">\b\d+\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SyntaxDefinition name="QSQL" extensions=".sql" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#6A9955" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Keyword" foreground="#569CD6"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Func" foreground="#DCDCAA"/>
+  <Color name="Const" foreground="#569CD6"/>
+  <RuleSet ignoreCase="true">
+    <Span color="Comment" begin="--" />
+    <Span color="Comment" multiline="true"><Begin>/*</Begin><End>*/</End></Span>
+    <Span color="String"><Begin>'</Begin><End>'</End></Span>
+    <Span color="String"><Begin>"</Begin><End>"</End></Span>
+    <Keywords color="Keyword"><Word>select</Word><Word>from</Word><Word>where</Word><Word>and</Word><Word>or</Word><Word>not</Word><Word>insert</Word><Word>into</Word><Word>values</Word><Word>update</Word><Word>set</Word><Word>delete</Word><Word>create</Word><Word>table</Word><Word>drop</Word><Word>alter</Word><Word>add</Word><Word>index</Word><Word>view</Word><Word>join</Word><Word>left</Word><Word>right</Word><Word>inner</Word><Word>outer</Word><Word>on</Word><Word>group</Word><Word>by</Word><Word>order</Word><Word>having</Word><Word>limit</Word><Word>offset</Word><Word>as</Word><Word>distinct</Word><Word>union</Word><Word>all</Word><Word>case</Word><Word>when</Word><Word>then</Word><Word>else</Word><Word>end</Word><Word>primary</Word><Word>key</Word><Word>foreign</Word><Word>references</Word><Word>default</Word><Word>exists</Word><Word>in</Word><Word>like</Word><Word>between</Word><Word>is</Word><Word>asc</Word><Word>desc</Word><Word>begin</Word><Word>commit</Word><Word>rollback</Word><Word>grant</Word><Word>revoke</Word><Word>database</Word><Word>use</Word><Word>show</Word><Word>if</Word></Keywords>
+    <Keywords color="Const"><Word>null</Word><Word>true</Word><Word>false</Word></Keywords>
+    <Rule color="Func">\b[A-Za-z_]\w*(?=\s*\()</Rule>
+    <Rule color="Number">\b\d+(\.\d+)?\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>

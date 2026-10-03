@@ -1,0 +1,278 @@
+﻿<Window x:Class="QTermWin.UI.XuiWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Ноды 3x-ui" Width="1240" Height="780" MinWidth="900" MinHeight="560"
+        Background="{DynamicResource BgBrush}" Foreground="{DynamicResource FgBrush}"
+        WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <Style x:Key="Seg" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="Padding" Value="14,6"/>
+            <Setter Property="MinWidth" Value="110"/>
+        </Style>
+        <Style x:Key="Dim" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="Grid" TargetType="ListView">
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style x:Key="Mono" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="TextWrapping" Value="NoWrap"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="Padding" Value="6"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="150" MinHeight="60"/>
+        </Grid.RowDefinitions>
+
+        <!-- Главная + панели -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock Text="Главная:" Style="{StaticResource Dim}" Margin="0,0,8,0"/>
+            <ComboBox x:Name="MasterBox" Width="260" SelectionChanged="Master_Changed"
+                      DisplayMemberPath="Name" VerticalAlignment="Center"/>
+            <Button Content="Панели и токены…" Click="Panels_Click" Margin="8,0,0,0"
+                    ToolTip="Адреса панелей (как в браузере) и их API-токены. Хранятся в вейлте QTerm (DPAPI) и едут синком в зашифрованном виде"/>
+            <Button Content="＋ Нода из выделения" Click="NodeFromSelection_Click" Margin="6,0,0,0"
+                    ToolTip="Итог установщика 3x-ui / AWG: выдели его в терминале (выделение копируется) и нажми. Новая нода или переустановка существующей"/>
+            <Button Content="Обновить" Click="Refresh_Click" Margin="6,0,0,0" ToolTip="F5"/>
+            <TextBlock x:Name="StatusText" Style="{StaticResource Dim}" Margin="12,0,0,0"
+                       TextTrimming="CharacterEllipsis"/>
+        </DockPanel>
+
+        <!-- Разделы -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+            <Button x:Name="SegMonitor" Style="{StaticResource Seg}" Content="Монитор" Tag="monitor" Click="Seg_Click"/>
+            <Button x:Name="SegClients" Style="{StaticResource Seg}" Content="Клиенты" Tag="clients" Click="Seg_Click"/>
+            <Button x:Name="SegNodes" Style="{StaticResource Seg}" Content="Узлы" Tag="nodes" Click="Seg_Click"/>
+            <Button x:Name="SegNames" Style="{StaticResource Seg}" Content="Ревизия имён" Tag="names" Click="Seg_Click"/>
+            <Button x:Name="SegAwg" Style="{StaticResource Seg}" Content="AWG" Tag="awg" Click="Seg_Click"
+                    ToolTip="Клиенты awg-panel всех нод: создать, вкл/выкл, конфиг, QR"/>
+        </StackPanel>
+
+        <Grid Grid.Row="2">
+            <!-- ── Монитор ── -->
+            <ListView x:Name="MonList" Style="{StaticResource Grid}">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="" Width="34">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate><TextBlock Text="●" Foreground="{Binding StatusBrush}"/></DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Сервер" Width="170" DisplayMemberBinding="{Binding Name}"/>
+                        <GridViewColumn Header="Статус" Width="110" DisplayMemberBinding="{Binding Status}"/>
+                        <GridViewColumn Header="Пинг" Width="70" DisplayMemberBinding="{Binding Ping}"/>
+                        <GridViewColumn Header="CPU" Width="70" DisplayMemberBinding="{Binding Cpu}"/>
+                        <GridViewColumn Header="RAM" Width="70" DisplayMemberBinding="{Binding Ram}"/>
+                        <GridViewColumn Header="Аптайм" Width="100" DisplayMemberBinding="{Binding Uptime}"/>
+                        <GridViewColumn Header="Xray" Width="120" DisplayMemberBinding="{Binding Xray}"/>
+                        <GridViewColumn Header="Онлайн / клиентов" Width="140" DisplayMemberBinding="{Binding Clients}"/>
+                        <GridViewColumn Header="Сеть ↑ / ↓" Width="170" DisplayMemberBinding="{Binding Net}"/>
+                        <GridViewColumn Header="Ошибка" Width="260" DisplayMemberBinding="{Binding Error}"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+
+            <!-- ── Клиенты ── -->
+            <DockPanel x:Name="ClientsView" Visibility="Collapsed">
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <TextBox x:Name="SearchBox" Width="220" Padding="6" TextChanged="Search_Changed"
+                             ToolTip="Поиск по имени и ID подписки"/>
+                    <Button Content="＋ Клиент" Click="ClientNew_Click" Margin="8,0,0,0"
+                            ToolTip="Имя приводится к списку («Ревизия имён»); привязка ко всем серверам или только к главной"/>
+                    <Button Content="Ссылка" Click="ClientLink_Click" Margin="6,0,0,0" ToolTip="Скопировать ссылку подписки"/>
+                    <Button Content="QR" Click="ClientQr_Click" Margin="6,0,0,0"/>
+                    <Button Content="Синхронизировать…" Click="ClientSync_Click" Margin="6,0,0,0"
+                            ToolTip="Выделенных (или всех) клиентов — на все серверы, где их нет. План с галками"/>
+                    <Button Content="Вкл / выкл" Click="ClientToggle_Click" Margin="6,0,0,0"/>
+                    <Button Content="Удалить" Click="ClientDelete_Click" Margin="6,0,0,0"/>
+                    <TextBlock Text="ПКМ — привязать/отвязать к серверам, переименовать, новый ID подписки. V — VLESS и др., H — Hysteria"
+                               Style="{StaticResource Dim}" Margin="12,0,0,0" TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+                <ListView x:Name="ClientList" Style="{StaticResource Grid}" SelectionMode="Extended"
+                          ContextMenuOpening="ClientList_ContextMenuOpening"
+                          MouseDoubleClick="ClientList_DoubleClick">
+                    <ListView.ContextMenu>
+                        <ContextMenu/>
+                    </ListView.ContextMenu>
+                </ListView>
+            </DockPanel>
+
+            <!-- ── Узлы ── -->
+            <DockPanel x:Name="NodesView" Visibility="Collapsed">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                    <Button Content="＋ Подключить ноду…" Click="NodeConnect_Click"
+                            ToolTip="Бэкапы → чистка дублей на ноде → регистрация на главной (токен node-sync) → единые имена → привязка"/>
+                    <Button Content="Ревизия ноды" Click="NodeRevise_Click" Margin="6,0,0,0"
+                            ToolTip="Для выбранной ноды с сохранённым токеном: убрать дубли и довести имена до списка"/>
+                    <Button Content="Выровнять клиентов" Click="NodeSync_Click" Margin="6,0,0,0"
+                            ToolTip="Добавить на выбранный узел всех клиентов главной, которых на нём нет. План с галками"/>
+                    <Button Content="Вкл / выкл" Click="NodeToggle_Click" Margin="6,0,0,0"/>
+                    <Button Content="Проверить связь" Click="NodeProbe_Click" Margin="6,0,0,0"/>
+                    <Button Content="Токен ноды…" Click="NodeToken_Click" Margin="6,0,0,0"
+                            ToolTip="Сохранить адрес и токен выбранной ноды в QTerm (нужен для ревизии)"/>
+                </StackPanel>
+                <ListView x:Name="NodeList" Style="{StaticResource Grid}" MouseDoubleClick="NodeList_DoubleClick">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="" Width="34">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate><TextBlock Text="●" Foreground="{Binding StatusBrush}"/></DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Узел" Width="140" DisplayMemberBinding="{Binding Name}"/>
+                            <GridViewColumn Header="Адрес" Width="260" DisplayMemberBinding="{Binding Address}"/>
+                            <GridViewColumn Header="Статус" Width="100" DisplayMemberBinding="{Binding Status}"/>
+                            <GridViewColumn Header="Вкл" Width="60" DisplayMemberBinding="{Binding Enabled}"/>
+                            <GridViewColumn Header="Входящих" Width="90" DisplayMemberBinding="{Binding Inbounds}"/>
+                            <GridViewColumn Header="Клиентов" Width="90" DisplayMemberBinding="{Binding Clients}"/>
+                            <GridViewColumn Header="Токен в QTerm" Width="120" DisplayMemberBinding="{Binding SavedText}"/>
+                            <GridViewColumn Header="Версия" Width="90" DisplayMemberBinding="{Binding Version}"/>
+                            <GridViewColumn Header="Ошибка" Width="260" DisplayMemberBinding="{Binding Error}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </DockPanel>
+
+            <!-- ── Ревизия имён ── -->
+            <Grid x:Name="NamesView" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="300"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <DockPanel Grid.Column="0">
+                    <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Style="{StaticResource Dim}" Margin="0,0,0,6"
+                               Text="Базовые имена — по одному в строке, без индекса. Индекс ставится сам: PC — VLESS, PC-HYS — Hysteria, PC-SYNC — оба. Синоним: СИНОНИМ = ИМЯ. Регистр, дефисы, «_» и кириллица (МАМА, ЛАП) не важны."/>
+                    <DockPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                        <Button Content="Сохранить" Click="NamesSave_Click" DockPanel.Dock="Right"/>
+                        <Button Content="По умолчанию" Click="NamesDefault_Click" DockPanel.Dock="Right" Margin="0,0,6,0"/>
+                    </DockPanel>
+                    <TextBox x:Name="NamesBox" AcceptsReturn="True" Padding="6"
+                             FontFamily="Cascadia Mono, Consolas" FontSize="13"
+                             VerticalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
+                </DockPanel>
+                <DockPanel Grid.Column="2">
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+                        <Button Content="Переезд на SYNC…" Click="Migrate_Click" Margin="0,0,6,0"
+                                ToolTip="Клиенты из списка: записи одного устройства → одна NAME-SYNC, и она на всех входящих VLESS и Hysteria всех серверов. План с галками"/>
+                        <Button Content="Проанализировать…" Click="Analyze_Click"
+                                ToolTip="Главная + все ноды с сохранённым токеном → план с галками → применить отмеченное"/>
+                        <TextBlock Text="План откроется отдельным окном с галками. Ключи и ID подписки сохраняются, названия входящих не меняются"
+                                   Style="{StaticResource Dim}" Margin="12,0,0,0"/>
+                    </StackPanel>
+                    <TextBox x:Name="PlanBox" Style="{StaticResource Mono}"/>
+                </DockPanel>
+            </Grid>
+
+            <!-- ── AWG (awg-panel) ── -->
+            <DockPanel x:Name="AwgView" Visibility="Collapsed">
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <ComboBox x:Name="AwgPanelBox" Width="200" SelectionChanged="AwgPanel_Changed" VerticalAlignment="Center"
+                              ToolTip="Какую AWG-ноду показывать; новый клиент создаётся на ней (или на всех)"/>
+                    <TextBox x:Name="AwgSearch" Width="170" Padding="6" Margin="8,0,0,0" TextChanged="AwgSearch_Changed"
+                             ToolTip="Поиск по имени и адресу"/>
+                    <Button Content="＋ Клиент" Click="AwgNew_Click" Margin="8,0,0,0"/>
+                    <Button Content="Конфиг → буфер" Click="AwgCopy_Click" Margin="6,0,0,0"/>
+                    <Button Content="Сохранить .conf" Click="AwgSave_Click" Margin="6,0,0,0"
+                            ToolTip="Выделенные клиенты — каждый в свой файл"/>
+                    <Button Content="QR" Click="AwgQr_Click" Margin="6,0,0,0"/>
+                    <Button Content="Вкл / выкл" Click="AwgToggle_Click" Margin="6,0,0,0"/>
+                    <Button Content="Удалить" Click="AwgDelete_Click" Margin="6,0,0,0"/>
+                    <Button Content="AWG-панели…" Click="Panels_Click" Margin="6,0,0,0"
+                            ToolTip="Добавить awg-panel ноды: адрес, логин и пароль админа (роль «AWG-панель»)"/>
+                    <TextBlock x:Name="AwgStatus" Style="{StaticResource Dim}" Margin="10,0,0,0" TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+                <ListView x:Name="AwgList" Style="{StaticResource Grid}" SelectionMode="Extended"
+                          MouseDoubleClick="AwgList_DoubleClick">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="" Width="30">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate><TextBlock Text="●" Foreground="{Binding DotBrush}"/></DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Нода" Width="110" DisplayMemberBinding="{Binding Panel}"/>
+                            <GridViewColumn Header="Клиент" Width="170" DisplayMemberBinding="{Binding Name}"/>
+                            <GridViewColumn Header="Интерфейс" Width="150" DisplayMemberBinding="{Binding Iface}"/>
+                            <GridViewColumn Header="Адрес" Width="120" DisplayMemberBinding="{Binding Address}"/>
+                            <GridViewColumn Header="Вкл" Width="50" DisplayMemberBinding="{Binding Enabled}"/>
+                            <GridViewColumn Header="Рукопожатие" Width="140" DisplayMemberBinding="{Binding Handshake}"/>
+                            <GridViewColumn Header="↓ / ↑" Width="170" DisplayMemberBinding="{Binding Traffic}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </DockPanel>
+
+            <!-- ── Первая настройка: нет главной ── -->
+            <Border x:Name="SetupView" Background="{DynamicResource BgBrush}" Visibility="Collapsed">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <Border HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,8" Width="640"
+                        Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderDim}"
+                        BorderThickness="1" CornerRadius="10" Padding="20,16">
+                    <StackPanel>
+                        <DockPanel>
+                            <Button Content="Проверить и сохранить" Click="SetupSave_Click" DockPanel.Dock="Right"
+                                    IsDefault="True" VerticalAlignment="Center"/>
+                            <TextBlock Text="Подключи главную панель" FontSize="19" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource FgBrush}" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <TextBlock x:Name="SetupResult" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                        <TextBlock TextWrapping="Wrap" Style="{StaticResource Dim}" Margin="0,6,0,0"
+                                   Text="Главная — панель 3x-ui, в «Узлы» которой добавлены остальные ноды (у тебя MSK). С неё берутся клиенты, подписки и состояние всех нод."/>
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="160"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="200"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Имя" Style="{StaticResource Dim}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="SetupName" Padding="6" Text="MSK"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Адрес — как в браузере, с портом и путём" Style="{StaticResource Dim}" Margin="0,0,0,4"/>
+                                <TextBox x:Name="SetupUrl" Padding="6"
+                                         ToolTip="Например https://x5.nosi.ru:2053/abcdef/ — ровно как открываешь панель (страница входа)"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="4">
+                                <TextBlock Text="Сертификат" Style="{StaticResource Dim}" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="SetupTls" SelectedIndex="0">
+                                    <ComboBoxItem Content="Проверять"/>
+                                    <ComboBoxItem Content="Не проверять"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock TextWrapping="Wrap" Style="{StaticResource Dim}" Margin="0,10,0,4"
+                                   Text="API-токен: в этой панели Настройки панели → Учетная запись → API-токены → «Новый токен»"/>
+                        <PasswordBox x:Name="SetupToken" Padding="6"/>
+                    </StackPanel>
+                </Border>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <GridSplitter Grid.Row="3" HorizontalAlignment="Stretch" Background="Transparent"/>
+        <TextBox x:Name="LogBox" Grid.Row="4" Style="{StaticResource Mono}"/>
+    </Grid>
+</Window>
