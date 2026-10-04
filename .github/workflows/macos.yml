@@ -1,13 +1,17 @@
 name: macos
 
-# Мак-версия: проверка сборки на каждый пуш (swift build + make-app.sh) и QTerm.app в артефакты.
-# Подпись в CI — ad-hoc: для ежедневной работы собирай у себя ./make-app.sh (серт «QTerm Self-Signed»),
-# иначе Keychain/Touch ID вейлта не узнают приложение.
+# Мак-версия: сборка на каждый пуш (swift build + make-app.sh).
+# Подпись — сертом «QTerm CI» из секретов MAC_SIGN_P12 / MAC_SIGN_P12_PASS (тот же серт стоит на маке,
+# поэтому Keychain/Touch ID вейлта узнают и CI-сборку, и локальную). Без секретов — ad-hoc, только артефакт.
+# На main с подписью — релиз mac-vX.Y.Z (zip с QTerm.app).
 on:
   push:
     branches: [main, 'mac-*']
     paths-ignore: ['windows/**', '.github/workflows/windows.yml']
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -25,6 +29,33 @@ jobs:
           xcodebuild -version
           swift --version
           echo "::notice::$(xcodebuild -version | tr '\n' ' ') · $(swift --version 2>&1 | head -1)"
+
+      - name: Серт подписи
+        env:
+          P12: ${{ secrets.MAC_SIGN_P12 }}
+          P12_PASS: ${{ secrets.MAC_SIGN_P12_PASS }}
+        run: |
+          if [ -z "$P12" ]; then
+            echo "::warning::нет секрета MAC_SIGN_P12 — подпись ad-hoc, релиз не публикуется"
+            exit 0
+          fi
+          set -euo pipefail
+          KC="$RUNNER_TEMP/sign.keychain-db"
+          KP=$(openssl rand -hex 12)
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/c.p12"
+          security create-keychain -p "$KP" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KP" "$KC"
+          security import "$RUNNER_TEMP/c.p12" -k "$KC" -P "$P12_PASS" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KP" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          # самоподписанный серт — доверить для подписи кода, иначе find-identity -v его не покажет
+          security find-certificate -c "QTerm CI" -p "$KC" > "$RUNNER_TEMP/c.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/c.pem"
+          rm -f "$RUNNER_TEMP/c.p12"
+          security find-identity -v -p codesigning | grep -q '"QTerm CI"'
+          echo "QTERM_SIGN_IDENTITY=QTerm CI" >> "$GITHUB_ENV"
+          echo "SIGNED=1" >> "$GITHUB_ENV"
 
       - name: Зависимости (setup-deps.sh)
         run: ./QTerm/setup-deps.sh
@@ -51,9 +82,23 @@ jobs:
         run: |
           VER=$(grep -m1 '^APP_VERSION=' make-app.sh | cut -d'"' -f2)
           echo "version=$VER" >> "$GITHUB_OUTPUT"
+          AUTH=$(codesign -dv --verbose=2 build/QTerm.app 2>&1 | grep -m1 '^Authority=' || echo "Authority=ad-hoc")
+          echo "::notice::QTerm $VER · $AUTH"
           ditto -c -k --keepParent build/QTerm.app "QTerm-$VER-macos-arm64.zip"
 
       - uses: actions/upload-artifact@v4
         with:
           name: QTerm-${{ steps.pack.outputs.version }}-macos-arm64
           path: QTerm/QTerm-${{ steps.pack.outputs.version }}-macos-arm64.zip
+
+      - name: Релиз
+        if: github.ref == 'refs/heads/main' && env.SIGNED == '1'
+        working-directory: QTerm
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${{ steps.pack.outputs.version }}"
+          TAG="mac-v$VER"
+          gh release delete "$TAG" -y --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" "QTerm-$VER-macos-arm64.zip" --title "QTerm $VER (macOS)" --latest=false \
+            --notes "QTerm $VER для macOS (arm64), подпись «QTerm CI». Поставить/обновить: gh release download $TAG -R ${{ github.repository }} -p '*.zip' -O /tmp/qterm.zip --clobber && rm -rf /Applications/QTerm.app && ditto -x -k /tmp/qterm.zip /Applications"

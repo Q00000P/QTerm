@@ -6,7 +6,15 @@ set -euo pipefail
 
 APP_NAME="QTerm"
 BUNDLE_ID="com.q00000p.qterm"
-SIGN_IDENTITY="${QTERM_SIGN_IDENTITY:-QTerm Self-Signed}"
+# Серт подписи: из окружения (CI), иначе первый найденный — «QTerm CI» (тот же, что в CI: Keychain
+# не видит разницы между своей и CI-сборкой), потом старый «QTerm Self-Signed».
+SIGN_IDENTITY="${QTERM_SIGN_IDENTITY:-}"
+if [ -z "$SIGN_IDENTITY" ]; then
+    for id in "QTerm CI" "QTerm Self-Signed"; do
+        if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$id\""; then SIGN_IDENTITY="$id"; break; fi
+    done
+    SIGN_IDENTITY="${SIGN_IDENTITY:-QTerm Self-Signed}"
+fi
 BUILD_CONFIG="release"
 APP_VERSION="3.11.5"
 
