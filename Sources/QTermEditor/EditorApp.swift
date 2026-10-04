@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AppKit
 import CodeEditSourceEditor
 import CodeEditLanguages
@@ -306,7 +307,20 @@ final class EditorSettings: ObservableObject {
 
 @MainActor
 final class EditorAppState: ObservableObject {
-    @Published var documents: [EditorDocument] = []
+    @Published var documents: [EditorDocument] = [] { didSet { watchDirty() } }
+
+    /// Тулбар смотрит на EditorAppState, а «грязность» живёт в документе — без пересылки
+    /// кнопки «Сохранить» оставались серыми, пока не дёрнется что-то ещё (меню видело верно).
+    private var dirtySubs: [ObjectIdentifier: AnyCancellable] = [:]
+    private func watchDirty() {
+        let ids = Set(documents.map { ObjectIdentifier($0) })
+        dirtySubs = dirtySubs.filter { ids.contains($0.key) }
+        for d in documents where dirtySubs[ObjectIdentifier(d)] == nil {
+            dirtySubs[ObjectIdentifier(d)] = d.$isDirty.removeDuplicates().dropFirst().sink { [weak self] _ in
+                DispatchQueue.main.async { self?.objectWillChange.send() }
+            }
+        }
+    }
     @Published var activeDocumentID: UUID?
     /// Хост не отвечает — предупредим, что сохранять некуда.
     @Published var hostSeen = true

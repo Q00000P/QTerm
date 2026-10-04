@@ -59,6 +59,12 @@ struct KeyPasteSheet: View {
     private func save() {
         let n = name.trimmingCharacters(in: .whitespaces)
         guard !n.isEmpty else { status = "Нужно имя ключа"; return }
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.range(of: #"(?m)^\S+\s+AAAA[0-9A-Za-z+/]{20}"#, options: .regularExpression) != nil
+            || t.contains("BEGIN SSH2 PUBLIC KEY") || t.contains("PUBLIC KEY-----") {
+            status = "✗ Это ПУБЛИЧНЫЙ ключ (строка «ssh-ed25519 AAAA…» — она лежит на сервере в authorized_keys). Для входа нужен ПРИВАТНЫЙ: файл без .pub (id_ed25519), текст от «-----BEGIN OPENSSH PRIVATE KEY-----» до «-----END OPENSSH PRIVATE KEY-----»."
+            return
+        }
         guard AppState.looksLikeKey(text) else {
             status = "✗ это не приватный ключ: нужен текст от «-----BEGIN … PRIVATE KEY-----» до «-----END …-----» (или .ppk)"
             return

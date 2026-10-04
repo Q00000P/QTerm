@@ -96,15 +96,28 @@ public partial class MainWindow
 
     private void ShowFilesPanel()
     {
-        FilesCol.Width = new GridLength(400);
+        var wdt = Security.AppSettings.Load().FilesWidth ?? 400;
+        FilesCol.Width = new GridLength(Math.Clamp(wdt, 200, FilesCol.MaxWidth > 0 ? FilesCol.MaxWidth : 800));
         FilesSplitCol.Width = new GridLength(4);
         FilesSplitter.Visibility = Visibility.Visible;
         FsFollowBox.IsChecked = _fsFollow;
         PaintHiddenBtn();
     }
 
+    /// <summary>Ширину файловой панели — в настройки (её прячут/показывают, общий механизм окон её не помнит).</summary>
+    private void RememberFilesWidth()
+    {
+        var w = FilesCol.ActualWidth;
+        if (w < 150) return;
+        var st = Security.AppSettings.Load();
+        if (st.FilesWidth is { } old && Math.Abs(old - w) < 1) return;
+        st.FilesWidth = Math.Round(w);
+        st.Save();
+    }
+
     private void HideFiles()
     {
+        RememberFilesWidth();
         FilesCol.Width = new GridLength(0);
         FilesSplitCol.Width = new GridLength(0);
         FilesSplitter.Visibility = Visibility.Collapsed;

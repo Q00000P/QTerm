@@ -94,22 +94,31 @@
                 </DockPanel>
             </Border>
 
-            <DockPanel Grid.Row="0" Margin="6,6,6,0">
-                <Button x:Name="FilesButton" DockPanel.Dock="Right" Content="Файлы"
-                        Click="FilesButton_Click" Margin="4,0,0,0" VerticalAlignment="Top"/>
-                <Button x:Name="SnippetsButton" DockPanel.Dock="Right" Content="Команды"
-                        Click="SnippetsButton_Click" Margin="4,0,0,0" VerticalAlignment="Top"/>
-                <Button x:Name="GitButton" DockPanel.Dock="Right" Content="Git"
-                        Click="GitButton_Click" MouseRightButtonUp="GitButton_RightClick"
-                        Margin="4,0,0,0" VerticalAlignment="Top"/>
-                <Button x:Name="ClearButton" DockPanel.Dock="Right" Content="Очистить"
-                        Click="ClearTerm_Click" Margin="4,0,0,0" VerticalAlignment="Top"/>
-                <Button x:Name="BroadcastButton" DockPanel.Dock="Right" Content="Во все"
-                        Click="Broadcast_Click" Margin="4,0,0,0" VerticalAlignment="Top"
-                        ToolTip="Сквозной ввод: клавиатура летит во все терминалы. ОСТОРОЖНО со стрелками/Tab — каждая нода подставит СВОЮ историю. Одинаковое везде — набор, вставка или сниппет из «Команд»"/>
+            <!-- Вкладки — одной строкой с прокруткой (колесо мыши) и списком «▾»; кнопки — своей колонкой справа -->
+            <Grid Grid.Row="0" Margin="6,6,6,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top" Margin="8,0,0,0">
+                    <Button x:Name="BroadcastButton" Content="Во все"
+                            Click="Broadcast_Click" Margin="0,0,4,0"
+                            ToolTip="Сквозной ввод: клавиатура летит во все терминалы. ОСТОРОЖНО со стрелками/Tab — каждая нода подставит СВОЮ историю. Одинаковое везде — набор, вставка или сниппет из «Команд»"/>
+                    <Button x:Name="ClearButton" Content="Очистить" Click="ClearTerm_Click" Margin="0,0,4,0"/>
+                    <Button x:Name="GitButton" Content="Git"
+                            Click="GitButton_Click" MouseRightButtonUp="GitButton_RightClick" Margin="0,0,4,0"/>
+                    <Button x:Name="SnippetsButton" Content="Команды" Click="SnippetsButton_Click" Margin="0,0,4,0"/>
+                    <Button x:Name="FilesButton" Content="Файлы" Click="FilesButton_Click"/>
+                </StackPanel>
+                <Button x:Name="TabListButton" Grid.Column="1" Content="▾" Click="TabList_Click" MinWidth="28"
+                        Margin="4,0,0,0" VerticalAlignment="Top" ToolTip="Все вкладки списком" Visibility="Collapsed"/>
+                <ScrollViewer x:Name="TabScroll" Grid.Column="0" HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollBarVisibility="Disabled" PreviewMouseWheel="TabScroll_Wheel"
+                              SizeChanged="TabScroll_SizeChanged">
                 <ItemsControl x:Name="TabStrip">
                 <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
@@ -119,7 +128,8 @@
                                 MouseLeftButtonDown="Tab_Click" MouseRightButtonUp="Tab_RightClick" Tag="{Binding Id}">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="●" Foreground="{Binding DotBrush}" Margin="0,0,6,0"/>
-                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource FgBrush}"/>
+                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource FgBrush}"
+                                           MaxWidth="150" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"/>
                                 <TextBlock Text="✕" Margin="10,0,0,0"
                                            Foreground="{DynamicResource DimBrush}"
                                            MouseLeftButtonDown="TabClose_Click" Tag="{Binding Id}"/>
@@ -128,7 +138,8 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
                 </ItemsControl>
-            </DockPanel>
+                </ScrollViewer>
+            </Grid>
 
             <Border Grid.Row="2" Margin="6,0,6,0"
                     BorderBrush="{DynamicResource BorderDim}" BorderThickness="1">
@@ -150,6 +161,7 @@
         </Grid>
 
         <GridSplitter x:Name="FilesSplitter" Grid.Column="3" HorizontalAlignment="Stretch"
+                      DragCompleted="FilesSplitter_DragCompleted"
                       Background="{DynamicResource BorderDim}" Visibility="Collapsed"/>
 
         <!-- Файловая панель (привязана к терминальной вкладке _filesTab), мобовская -->

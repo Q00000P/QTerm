@@ -19,7 +19,9 @@ namespace QTermShared;
 /// · диалог открывается по центру окна-владельца на ЕГО мониторе (а не где придётся при разном DPI);
 /// · главные окна без владельца — на мониторе главного окна QTerm (или под курсором);
 /// · размер/положение (и «развёрнуто») запоминаются в %APPDATA%\QTerm\windows.json; если того монитора больше нет —
-///   окно возвращается в видимую область.
+///   окно возвращается в видимую область;
+/// · пропорции внутри окна — ширины/высоты колонок и строк у сеток с GridSplitter — запоминаются там же
+///   (при отпускании разделителя и при закрытии) и восстанавливаются при открытии.
 /// Координаты — в пикселях через Win32: WPF-овские Left/Top в DIP на мониторах с разным масштабом врут.
 /// </summary>
 public static class WindowFit
@@ -78,6 +80,8 @@ public static class WindowFit
         public bool Max { get; set; }
         public double W { get; set; }
         public double H { get; set; }
+        /// <summary>Сетки с разделителями: имя (или #номер) → «C:300,*1.5;R:*1,200».</summary>
+        public Dictionary<string, string>? Splits { get; set; }
     }
 
     private static readonly string StorePath = Path.Combine(
@@ -166,6 +170,7 @@ public static class WindowFit
             }
             w.Closing += (_, _) => Remember(w, key, owned);
         }
+        if (key is not null) HookSplits(w, key, resizable, owned);
 
         w.UpdateLayout();
         // растягиваем только диалоги: у главных окон (QTerm, «Ноды 3x-ui», QEditor) размер свой/запомненный,
@@ -181,7 +186,7 @@ public static class WindowFit
 
     private static void Remember(Window w, string key, bool owned)
     {
-        var p = new Place();
+        var p = new Place { Splits = CaptureSplits(w) };
         var rb = w.RestoreBounds;
         if (!rb.IsEmpty && rb.Width > 0) { p.W = rb.Width; p.H = rb.Height; }
         else { p.W = w.ActualWidth; p.H = w.ActualHeight; }
@@ -194,7 +199,125 @@ public static class WindowFit
                 p.Max = wp.showCmd == SW_SHOWMAXIMIZED || w.WindowState == WindowState.Maximized;
             }
         }
+        if (ReadStore().TryGetValue(key, out var old) && old.Splits is { } prevSplits)
+        {
+            var merged = new Dictionary<string, string>(prevSplits);
+            foreach (var (gk, enc) in p.Splits ?? new())
+                merged[gk] = prevSplits.TryGetValue(gk, out var pv) ? MergeKeepNonZero(pv, enc) : enc;
+            p.Splits = merged;
+        }
         WriteStore(key, p);
+    }
+
+    // ── пропорции: сетки с GridSplitter ──
+
+    private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        var n = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < n; i++)
+        {
+            var c = VisualTreeHelper.GetChild(root, i);
+            if (c is T t) yield return t;
+            foreach (var d in Descendants<T>(c)) yield return d;
+        }
+    }
+
+    private static List<(string Key, Grid Grid)> SplitGrids(Window w)
+    {
+        var grids = Descendants<GridSplitter>(w)
+            .Select(s => VisualTreeHelper.GetParent(s) as Grid)
+            .Where(g => g is not null).Distinct().Cast<Grid>().ToList();
+        return grids.Select((g, i) => (string.IsNullOrEmpty(g.Name) ? "#" + i : g.Name, g)).ToList();
+    }
+
+    private static string Enc(GridLength l) =>
+        l.IsAuto ? "a" : (l.IsStar ? "*" : "") + l.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static GridLength? Dec(string s)
+    {
+        if (s == "a" || s.Length == 0) return null;
+        var star = s[0] == '*';
+        return double.TryParse(star ? s[1..] : s, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var v)
+            ? new GridLength(v, star ? GridUnitType.Star : GridUnitType.Pixel) : null;
+    }
+
+    private static Dictionary<string, string>? CaptureSplits(Window w)
+    {
+        var grids = SplitGrids(w);
+        if (grids.Count == 0) return null;
+        return grids.ToDictionary(x => x.Key, x =>
+            "C:" + string.Join(",", x.Grid.ColumnDefinitions.Select(c => Enc(c.Width))) +
+            ";R:" + string.Join(",", x.Grid.RowDefinitions.Select(r => Enc(r.Height))));
+    }
+
+    /// <summary>Восстановить и следить. Колонки/строки, которые окно прячет само (ширина 0) или которые «авто»,
+    /// не трогаем ни при восстановлении, ни поверх запомненного.</summary>
+    private static void HookSplits(Window w, string key, bool resizable, bool owned)
+    {
+        var grids = SplitGrids(w);
+        if (grids.Count == 0) return;
+        if (ReadStore().TryGetValue(key, out var pl) && pl.Splits is { } saved)
+        {
+            foreach (var (gk, g) in grids)
+            {
+                if (!saved.TryGetValue(gk, out var enc)) continue;
+                var parts = enc.Split(';');
+                if (parts.Length != 2) continue;
+                var cols = parts[0].StartsWith("C:") ? parts[0][2..].Split(',') : Array.Empty<string>();
+                var rows = parts[1].StartsWith("R:") ? parts[1][2..].Split(',') : Array.Empty<string>();
+                if (cols.Length == g.ColumnDefinitions.Count)
+                    for (var i = 0; i < cols.Length; i++)
+                    {
+                        var cur = g.ColumnDefinitions[i].Width;
+                        if (Dec(cols[i]) is { } v && v.Value > 0 && !cur.IsAuto && cur.Value > 0) g.ColumnDefinitions[i].Width = v;
+                    }
+                if (rows.Length == g.RowDefinitions.Count)
+                    for (var i = 0; i < rows.Length; i++)
+                    {
+                        var cur = g.RowDefinitions[i].Height;
+                        if (Dec(rows[i]) is { } v && v.Value > 0 && !cur.IsAuto && cur.Value > 0) g.RowDefinitions[i].Height = v;
+                    }
+            }
+        }
+        // отпустил разделитель — сразу в файл (не только при закрытии: окно могли убить)
+        foreach (var s in Descendants<GridSplitter>(w))
+            s.DragCompleted += (_, _) => SaveSplits(w, key);
+        if (!resizable) w.Closing += (_, _) => SaveSplits(w, key);
+    }
+
+    private static void SaveSplits(Window w, string key)
+    {
+        try
+        {
+            var all = ReadStore();
+            var p = all.TryGetValue(key, out var old) ? old : new Place();
+            var now = CaptureSplits(w);
+            if (now is null) return;
+            p.Splits ??= new();
+            foreach (var (gk, enc) in now)
+            {
+                // спрятанная колонка (0) не затирает запомненную ширину
+                if (p.Splits.TryGetValue(gk, out var prev)) p.Splits[gk] = MergeKeepNonZero(prev, enc);
+                else p.Splits[gk] = enc;
+            }
+            WriteStore(key, p);
+        }
+        catch { /* не критично */ }
+    }
+
+    private static string MergeKeepNonZero(string prev, string now)
+    {
+        static string[] Part(string s, string tag) =>
+            s.Split(';').FirstOrDefault(x => x.StartsWith(tag)) is { } x ? x[tag.Length..].Split(',') : Array.Empty<string>();
+        string Merge(string tag)
+        {
+            var a = Part(prev, tag);
+            var b = Part(now, tag);
+            if (a.Length != b.Length) return string.Join(",", b);
+            return string.Join(",", b.Select((v, i) => v is "0" or "*0" ? a[i] : v));
+        }
+        return "C:" + Merge("C:") + ";R:" + Merge("R:");
     }
 
     private static bool Restore(IntPtr hwnd, Place pl)

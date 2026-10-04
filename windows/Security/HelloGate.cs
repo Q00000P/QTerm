@@ -15,6 +15,7 @@ public sealed class AppSettings
     public int? ScrollbackLines { get; set; }   // пусто = 20000, clamp 50…1_000_000 (мак-канон)
     public bool? FsShowHidden { get; set; }     // файлы: показывать .dot (пусто = да)
     public bool? FsFollowTerminal { get; set; } // файлы: следовать за папкой терминала
+    public double? FilesWidth { get; set; }     // ширина файловой панели (пусто = 400)
     public Dictionary<string, string>? Hotkeys { get; set; }
     public Dictionary<string, GitUse>? GitUsage { get; set; } // команды Git: частота/последний вариант (локально) // id функции → «Ctrl+Shift+KeyG» ("" = снято); только отличия от умолчаний
 

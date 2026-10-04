@@ -68,6 +68,8 @@ public partial class MainWindow : Window
         InitializeComponent();
         Title = BuildTitle();
         TabStrip.ItemsSource = _tabs;
+        _tabs.CollectionChanged += (_, _) => Dispatcher.InvokeAsync(UpdateTabOverflow, System.Windows.Threading.DispatcherPriority.Loaded);
+        Closing += (_, _) => { if (FilesCol.Width.Value > 0) RememberFilesWidth(); };
         _repo.Changed += () => RunOnUi(RefreshList);
         try { _repo.LoadOrInit(); }
         catch (Exception ex)
@@ -623,6 +625,7 @@ public partial class MainWindow : Window
         if (vm is null) return;
         _activeTab = id;
         foreach (var t in _tabs) t.IsActive = t.Id == id;
+        ScrollTabIntoView(id);
         Placeholder.Visibility = Visibility.Collapsed;
 
         Web.Visibility = Visibility.Visible;
@@ -633,6 +636,51 @@ public partial class MainWindow : Window
         _filesTab = id; // панель следует за активной нодой (мак-канон)
         if (FilesCol.Width.Value > 0) RenderFilesOrProgress();
     }
+
+    // ── полоса вкладок: одна строка, колесо — прокрутка, «▾» — список ──
+
+    private void TabScroll_Wheel(object sender, MouseWheelEventArgs e)
+    {
+        TabScroll.ScrollToHorizontalOffset(TabScroll.HorizontalOffset - e.Delta);
+        e.Handled = true;
+    }
+
+    private void TabScroll_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateTabOverflow();
+
+    /// <summary>«▾» — только когда вкладки не влезают.</summary>
+    private void UpdateTabOverflow()
+    {
+        TabScroll.UpdateLayout();
+        TabListButton.Visibility = TabScroll.ExtentWidth > TabScroll.ViewportWidth + 1 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void TabList_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = TabListButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        foreach (var t in _tabs)
+        {
+            var id = t.Id;
+            var item = new MenuItem { Header = t.Name, IsChecked = t.Id == _activeTab };
+            item.Click += (_, _) => ActivateTab(id);
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
+    }
+
+    /// <summary>Активная вкладка — в видимую часть полосы.</summary>
+    private void ScrollTabIntoView(Guid id)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            UpdateTabOverflow();
+            var vm = _tabs.FirstOrDefault(t => t.Id == id);
+            if (vm is null) return;
+            if (TabStrip.ItemContainerGenerator.ContainerFromItem(vm) is FrameworkElement fe) fe.BringIntoView();
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private void FilesSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e) =>
+        RememberFilesWidth();
 
     private void Tab_Click(object sender, MouseButtonEventArgs e)
     {

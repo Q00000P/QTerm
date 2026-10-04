@@ -1,4 +1,5 @@
-﻿using System.Windows;
+﻿using System.Text.RegularExpressions;
+using System.Windows;
 using System.Windows.Controls;
 using QTermWin.Models;
 using QTermWin.Vault;
@@ -32,6 +33,12 @@ public static class KeyPasteDialog
             try { return Security.PpkConverter.Convert(text, pass); }
             catch (Security.PpkConverter.BadPassphraseException) { error = "passphrase не подошла (MAC не сошёлся)"; return null; }
             catch (Exception ex) { error = "PPK: " + ex.Message; return null; }
+        }
+        if (Regex.IsMatch(text, @"^\S+\s+AAAA[0-9A-Za-z+/]{20}", RegexOptions.Multiline) ||
+            text.Contains("BEGIN SSH2 PUBLIC KEY") || text.Contains("PUBLIC KEY-----"))
+        {
+            error = "Это ПУБЛИЧНЫЙ ключ (строка «ssh-ed25519 AAAA…» — она лежит на сервере в authorized_keys). Для входа нужен ПРИВАТНЫЙ: файл без .pub (id_ed25519), текст от «-----BEGIN OPENSSH PRIVATE KEY-----» до «-----END OPENSSH PRIVATE KEY-----».";
+            return null;
         }
         if (!text.Contains("PRIVATE KEY-----"))
         {
