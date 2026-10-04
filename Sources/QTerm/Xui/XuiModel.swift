@@ -673,6 +673,47 @@ final class XuiModel: ObservableObject {
         }
     }
 
+    /// Узел — с главной долой, сервер остаётся сам по себе: выключить узел (главная перестаёт слать
+    /// изменения на ноду) → удалить его инбаунды на главной (на ноде они остаются) → удалить узел →
+    /// токен node-sync главной на ноде отозвать. Подписка главной больше узел не содержит.
+    func nodeRemove() async {
+        guard let r = needNode() else { return }
+        let ibs = inbounds.filter { $0.nodeId == r.src.id }
+        guard XuiDialog.confirm(
+            "Убрать узел «\(r.name)» (\(r.address)) с главной?\n\n" +
+            "1) бэкап базы главной;\n2) узел выключается — главная перестаёт слать на него изменения;\n" +
+            "3) его инбаунды на главной удаляются (\(ibs.map(\.remark).joined(separator: ", "))) — НА САМОЙ НОДЕ они остаются и работают;\n" +
+            "4) узел удаляется, токен главной на ноде отзывается (если токен ноды есть в QTerm).\n\n" +
+            "Из единой подписки нода пропадёт. Клиенты на главной остаются; подключить ноду обратно — «＋ Подключить ноду…».",
+            title: "Убрать узел", yes: "Убрать") else { return }
+        await runOp("Убрать узел \(r.name)") { m in
+            let path = try await XuiBackups.save(m, self.masterPanel?.name ?? m.label)
+            self.log("  ✓ бэкап главной → \(path)", .ok)
+            if r.src.enable {
+                try await m.setNodeEnable(r.src.id, false)
+                self.log("  ✓ узел выключен", .ok)
+            }
+            for ib in ibs {
+                try await m.deleteInbound(ib.id)
+                self.log("  ✓ инбаунд «\(ib.remark)» убран с главной", .ok)
+            }
+            try await m.deleteNode(r.src.id)
+            self.log("  ✓ узел «\(r.name)» удалён с главной", .ok)
+            // токен node-sync, который главная держала на ноде, больше не нужен
+            if let saved = r.saved, let node = try? XuiAPI.forPanel(saved) {
+                do {
+                    let toks = try await node.apiTokens().filter {
+                        J.str($0, "scope") == "node-sync" && J.str($0, "name").hasPrefix("qterm-master-")
+                    }
+                    for t in toks {
+                        try await node.deleteApiToken(J.int(t, "id"))
+                        self.log("  ✓ на ноде отозван токен «\(J.str(t, "name"))»", .ok)
+                    }
+                } catch { self.log("  ! токен главной на ноде не отозван: \(error.localizedDescription)", .warn) }
+            }
+        }
+    }
+
     func nodeSync() async {
         guard let r = needNode() else { return }
         await runSync("Выровнять клиентов · " + r.name, "Все клиенты главной → узел «\(r.name)»",

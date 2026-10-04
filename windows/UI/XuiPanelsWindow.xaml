@@ -38,6 +38,8 @@
         <DockPanel Grid.Column="2">
             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
                 <Button Content="Удалить" Click="Delete_Click" Margin="0,0,8,0"/>
+                <Button Content="Сменить логин/пароль…" Click="ChangeCreds_Click" Margin="0,0,8,0"
+                        ToolTip="Пароль админа панели (3x-ui — и логин) прямо на панели; новый сохраняется в QTerm"/>
                 <Button Content="Проверить" Click="Test_Click" Margin="0,0,8,0"/>
                 <Button Content="Сохранить" Click="Save_Click" IsDefault="True" MinWidth="100"/>
             </StackPanel>

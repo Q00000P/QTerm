@@ -489,6 +489,21 @@ public sealed class XuiApi : IDisposable
     public Task<JsonNode?> AddNodeAsync(object body) => PostAsync("/nodes/add", body);
     public Task SetNodeEnableAsync(int id, bool enable) => PostAsync($"/nodes/setEnable/{id}", new { enable });
     public Task ProbeNodeAsync(int id) => PostAsync($"/nodes/probe/{id}");
+    public Task DeleteNodeAsync(int id) => PostAsync($"/nodes/del/{id}");
+    public Task DeleteInboundAsync(int id) => PostAsync($"/inbounds/del/{id}");
+
+    /// <summary>API-токены панели (id, name, scope…).</summary>
+    public async Task<List<JsonObject>> ApiTokensAsync() =>
+        (await GetAsync("/setting/apiTokens") as JsonArray ?? new JsonArray()).OfType<JsonObject>().ToList();
+    public Task DeleteApiTokenAsync(int id) => PostAsync($"/setting/apiTokens/delete/{id}");
+
+    /// <summary>Логин/пароль админа панели (нужны текущие; 2FA — код, если включена). Токены продолжают работать.</summary>
+    public Task UpdateUserAsync(string oldLogin, string oldPass, string newLogin, string newPass, string? twoFa) =>
+        PostAsync("/setting/updateUser", new
+        {
+            oldUsername = oldLogin, oldPassword = oldPass, newUsername = newLogin, newPassword = newPass,
+            twoFactorCode = twoFa ?? "",
+        });
 
     public async Task<string?> CreateTokenAsync(string name, string scope)
     {

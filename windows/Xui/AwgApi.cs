@@ -76,6 +76,10 @@ public sealed class AwgApi : IAwgApi
 
     public void Dispose() => _http.Dispose();
 
+    /// <summary>Пароль админа awg-panel (логин не меняется; от 12 символов).</summary>
+    public Task ChangePasswordAsync(string current, string newPass) =>
+        SendAsync(HttpMethod.Post, "/me/password", new { currentPassword = current, newPassword = newPass, confirmPassword = newPass });
+
     private async Task<string> SendAsync(HttpMethod m, string path, object? body = null)
     {
         using var req = new HttpRequestMessage(m, Base + "/api" + path);

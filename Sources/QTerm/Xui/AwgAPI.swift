@@ -83,6 +83,11 @@ final class AwgPanelAPI: AwgAPI {
         return data
     }
 
+    /// Пароль админа awg-panel (логин не меняется; от 12 символов).
+    func changePassword(current: String, new: String) async throws {
+        try await send("POST", "/me/password", ["currentPassword": current, "newPassword": new, "confirmPassword": new])
+    }
+
     func interfaces() async throws -> [AwgInterface] {
         let arr = (J.parse(try await send("GET", "/interfaces")) as? [Any]) ?? []
         return arr.compactMap { $0 as? JObj }.map {

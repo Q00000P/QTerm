@@ -175,6 +175,60 @@ public static class XuiDialog
         return t;
     }
 
+    public sealed record Field(string Label, string Value = "", bool Secure = false);
+
+    /// <summary>Форма из нескольких полей (подпись над каждым). null — отмена.</summary>
+    public static string[]? Form(Window owner, string text, string title, IList<Field> fields, string ok = "OK")
+    {
+        string[]? result = null;
+        var w = Plain(owner, title);
+        var root = new System.Windows.Controls.StackPanel { Margin = new Thickness(18) };
+        root.Children.Add(Caption(text));
+        var getters = new List<Func<string>>();
+        System.Windows.Controls.Control? first = null;
+        foreach (var f in fields)
+        {
+            root.Children.Add(Cap(f.Label));
+            if (f.Secure)
+            {
+                var pb = new System.Windows.Controls.PasswordBox { Padding = new Thickness(6), Password = f.Value };
+                root.Children.Add(pb);
+                getters.Add(() => pb.Password);
+                first ??= pb;
+            }
+            else
+            {
+                var tb = new System.Windows.Controls.TextBox { Padding = new Thickness(6), Text = f.Value };
+                root.Children.Add(tb);
+                getters.Add(() => tb.Text);
+                first ??= tb;
+            }
+        }
+        var row = new System.Windows.Controls.StackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0),
+        };
+        var okBtn = new System.Windows.Controls.Button { Content = ok, MinWidth = 100, IsDefault = true };
+        var cancel = new System.Windows.Controls.Button { Content = "Отмена", MinWidth = 100, Margin = new Thickness(8, 0, 0, 0), IsCancel = true };
+        okBtn.Click += (_, _) => { result = getters.Select(g => g()).ToArray(); w.Close(); };
+        cancel.Click += (_, _) => w.Close();
+        row.Children.Add(okBtn);
+        row.Children.Add(cancel);
+        root.Children.Add(row);
+        w.Content = root;
+        w.Loaded += (_, _) => first?.Focus();
+        w.ShowDialog();
+        return result;
+    }
+
+    /// <summary>Случайный пароль без похожих символов (0/O, 1/l/I).</summary>
+    public static string RandomPassword(int n = 20)
+    {
+        const string chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        return new string(Enumerable.Range(0, n).Select(_ => chars[System.Security.Cryptography.RandomNumberGenerator.GetInt32(chars.Length)]).ToArray());
+    }
+
     /// <summary>Логин / пароль / код 2FA. null — «Пропустить».</summary>
     public static (string Login, string Pass, string TwoFa)? Credentials(Window owner, string text, string title, string login)
     {

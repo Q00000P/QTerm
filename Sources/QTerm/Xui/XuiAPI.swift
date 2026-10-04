@@ -367,6 +367,19 @@ final class XuiAPI {
     func addNode(_ body: JObj) async throws -> JObj? { try await post("/nodes/add", body) as? JObj }
     func setNodeEnable(_ id: Int, _ enable: Bool) async throws { try await post("/nodes/setEnable/\(id)", ["enable": enable]) }
     func probeNode(_ id: Int) async throws { try await post("/nodes/probe/\(id)") }
+    func deleteNode(_ id: Int) async throws { try await post("/nodes/del/\(id)") }
+    func deleteInbound(_ id: Int) async throws { try await post("/inbounds/del/\(id)") }
+
+    /// API-токены панели (id, name, scope…).
+    func apiTokens() async throws -> [JObj] { ((try await get("/setting/apiTokens")) as? [Any] ?? []).compactMap { $0 as? JObj } }
+    func deleteApiToken(_ id: Int) async throws { try await post("/setting/apiTokens/delete/\(id)") }
+
+    /// Логин/пароль админа панели (нужны текущие; 2FA — код, если включена). Токены продолжают работать.
+    func updateUser(oldLogin: String, oldPass: String, newLogin: String, newPass: String, twoFa: String?) async throws {
+        try await post("/setting/updateUser", ["oldUsername": oldLogin, "oldPassword": oldPass,
+                                               "newUsername": newLogin, "newPassword": newPass,
+                                               "twoFactorCode": twoFa ?? ""])
+    }
     func nodeGet(_ id: Int) async throws -> JObj { (try await get("/nodes/get/\(id)") as? JObj) ?? [:] }
     func nodeUpdate(_ id: Int, _ body: JObj) async throws { try await post("/nodes/update/\(id)", body) }
 

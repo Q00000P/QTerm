@@ -205,6 +205,69 @@ public partial class XuiPanelsWindow : Window
         ResultText.Text = "✓ сохранено (DPAPI; синком — в зашифрованном виде)";
     }
 
+    /// <summary>Сменить логин/пароль админа на самой панели и сохранить новый в QTerm.</summary>
+    private async void ChangeCreds_Click(object sender, RoutedEventArgs e)
+    {
+        if (_cur is null) { ResultText.Text = "Выбери панель слева"; return; }
+        var p = _cur;
+        if (p.IsAwgLegacy)
+        {
+            ResultText.Text = "Старая amnezia-wg-easy: пароль задаётся на сервере (PASSWORD_HASH контейнера) — через её API не сменить";
+            return;
+        }
+        var savedOld = p.IsXui ? p.Pass ?? "" : p.Token;
+        var askLogin = p.Login.Length == 0;
+        var fields = new List<XuiDialog.Field>();
+        if (askLogin) fields.Add(new("Текущий логин"));
+        if (savedOld.Length == 0) fields.Add(new("Текущий пароль", Secure: true));
+        if (p.IsXui) fields.Add(new("Новый логин", p.Login));
+        fields.Add(new("Новый пароль (пусто — сгенерирую)", Secure: true));
+        fields.Add(new("Новый пароль ещё раз", Secure: true));
+        if (p.IsXui) fields.Add(new("Код 2FA, если включена"));
+        var v = XuiDialog.Form(this,
+            p.IsXui ? $"Логин и пароль админа 3x-ui «{p.Name}». API-токены продолжают работать."
+                    : $"Пароль админа awg-panel «{p.Name}» (логин {p.Login} не меняется, от 12 символов).",
+            "Сменить логин/пароль", fields, "Сменить");
+        if (v is null) return;
+        var i = 0;
+        var curLogin = askLogin ? v[i++].Trim() : p.Login;
+        var old = savedOld.Length == 0 ? v[i++] : savedOld;
+        var newLogin = p.IsXui ? v[i++].Trim() : p.Login;
+        var newPass = v[i++];
+        var again = v[i++];
+        var twoFa = p.IsXui ? v[i++].Trim() : "";
+        var generated = false;
+        if (newPass.Length == 0 && again.Length == 0) { newPass = XuiDialog.RandomPassword(); generated = true; }
+        if (!generated && newPass != again) { ResultText.Text = "✗ пароли не совпадают"; return; }
+        if (p.IsAwg && newPass.Length < 12) { ResultText.Text = "✗ awg-panel: пароль от 12 символов"; return; }
+        if (curLogin.Length == 0 || old.Length == 0 || newLogin.Length == 0) { ResultText.Text = "✗ нужны текущие логин и пароль"; return; }
+        ResultText.Text = "меняю на панели…";
+        try
+        {
+            if (p.IsXui)
+            {
+                using var api = XuiApi.For(p);
+                await api.UpdateUserAsync(curLogin, old, newLogin, newPass, twoFa.Length > 0 ? twoFa : null);
+                p.Login = newLogin;
+                p.Pass = newPass;
+            }
+            else
+            {
+                using var api = new AwgApi(p.Name, p.Url, curLogin, old, p.VerifyTls);
+                await api.ChangePasswordAsync(old, newPass);
+                p.Login = curLogin;
+                p.Token = newPass;
+            }
+            _store.SavePanel(p);
+            Reload(p.Id);
+            ResultText.Text = "✓ сменено на панели и сохранено в QTerm";
+            if (generated)
+                XuiDialog.Secret(this, $"Новый пароль админа «{p.Name}» — уже сохранён в QTerm. Скопируй в менеджер паролей.",
+                    "Новый пароль", newPass);
+        }
+        catch (Exception ex) { ResultText.Text = "✗ " + ex.Message; }
+    }
+
     private void Delete_Click(object sender, RoutedEventArgs e)
     {
         if (_cur is null) return;

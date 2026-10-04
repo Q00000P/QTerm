@@ -139,6 +139,8 @@
                     <Button Content="Проверить связь" Click="NodeProbe_Click" Margin="6,0,0,0"/>
                     <Button Content="Токен ноды…" Click="NodeToken_Click" Margin="6,0,0,0"
                             ToolTip="Сохранить адрес и токен выбранной ноды в QTerm (нужен для ревизии)"/>
+                    <Button Content="Убрать с главной…" Click="NodeRemove_Click" Margin="6,0,0,0"
+                            ToolTip="Убрать узел из главной и единой подписки; инбаунды на самой ноде остаются"/>
                 </StackPanel>
                 <ListView x:Name="NodeList" Style="{StaticResource Grid}" MouseDoubleClick="NodeList_DoubleClick">
                     <ListView.View>

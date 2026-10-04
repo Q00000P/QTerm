@@ -279,6 +279,8 @@ struct XuiWindowView: View {
                 Button("Вкл / выкл") { Task { await m.nodeToggle() } }
                 Button("Проверить связь") { Task { await m.nodeProbe() } }
                 Button("Токен ноды…") { Task { await m.nodeToken() } }
+                Button("Убрать с главной…") { Task { await m.nodeRemove() } }
+                    .help("Убрать узел из главной и единой подписки; инбаунды на самой ноде остаются")
                 Spacer()
             }
             Table(m.nodeRows, selection: $m.nodeSel) {
@@ -298,6 +300,8 @@ struct XuiWindowView: View {
                 Button("Ревизия ноды") { Task { await m.nodeRevise() } }
                 Button("Выровнять клиентов") { Task { await m.nodeSync() } }
                 Button("Токен ноды…") { Task { await m.nodeToken() } }
+                Divider()
+                Button("Убрать с главной…") { Task { await m.nodeRemove() } }
             } primaryAction: { _ in Task { await m.nodeRevise() } }
             .copyRows { nodeText(m.nodeSel.map { [$0] } ?? []).joined(separator: "\n") }
         }
@@ -726,6 +730,9 @@ struct PanelsSheet: View {
                 }
                 HStack {
                     Button("Удалить") { deletePanel() }.disabled(cur == nil)
+                    Button("Сменить логин/пароль…") { Task { await changeCreds() } }
+                        .disabled(cur == nil)
+                        .help("Пароль админа панели (3x-ui — и логин) прямо на панели; новый сохраняется в QTerm")
                     Spacer()
                     Button("Проверить") { Task { await test() } }
                     Button("Сохранить") { save() }.keyboardShortcut(.defaultAction)
@@ -846,6 +853,63 @@ struct PanelsSheet: View {
         store.save(p)
         reload(p.id)
         result = "✓ сохранено (вейлт; синком — в зашифрованном виде)"
+    }
+
+    /// Сменить логин/пароль админа на самой панели и сохранить новый в QTerm.
+    private func changeCreds() async {
+        guard var p = cur else { return }
+        if p.isAwgLegacy {
+            result = "Старая amnezia-wg-easy: пароль задаётся на сервере (PASSWORD_HASH контейнера) — через её API не сменить"
+            return
+        }
+        let savedOld = p.isXui ? (p.pass ?? "") : p.token
+        var fields: [XuiDialog.Field] = []
+        let askLogin = p.login.isEmpty
+        if askLogin { fields.append(.init(label: "Текущий логин", value: "")) }
+        if savedOld.isEmpty { fields.append(.init(label: "Текущий пароль", secure: true)) }
+        if p.isXui { fields.append(.init(label: "Новый логин", value: p.login)) }
+        fields.append(.init(label: "Новый пароль (пусто — сгенерирую)", secure: true))
+        fields.append(.init(label: "Новый пароль ещё раз", secure: true))
+        if p.isXui { fields.append(.init(label: "Код 2FA, если включена", value: "")) }
+        guard let v = XuiDialog.form(
+            p.isXui ? "Логин и пароль админа 3x-ui «\(p.name)». API-токены продолжают работать."
+                    : "Пароль админа awg-panel «\(p.name)» (логин \(p.login) не меняется, от 12 символов).",
+            title: "Сменить логин/пароль", fields, ok: "Сменить") else { return }
+        var i = 0
+        func next() -> String { defer { i += 1 }; return v[i].trimmingCharacters(in: .whitespaces) }
+        let curLogin = askLogin ? next() : p.login
+        let old = savedOld.isEmpty ? v[i] : savedOld
+        if savedOld.isEmpty { i += 1 }
+        let newLogin = p.isXui ? next() : p.login
+        var newPass = v[i]; i += 1
+        let again = v[i]; i += 1
+        let twoFa = p.isXui ? next() : ""
+        var generated = false
+        if newPass.isEmpty && again.isEmpty { newPass = XuiDialog.randomPassword(); generated = true }
+        guard newPass == again || generated else { result = "✗ пароли не совпадают"; return }
+        if p.isAwg && newPass.count < 12 { result = "✗ awg-panel: пароль от 12 символов"; return }
+        if curLogin.isEmpty || old.isEmpty || newLogin.isEmpty { result = "✗ нужны текущие логин и пароль"; return }
+        result = "меняю на панели…"
+        do {
+            if p.isXui {
+                try await XuiAPI.forPanel(p).updateUser(oldLogin: curLogin, oldPass: old, newLogin: newLogin,
+                                                        newPass: newPass, twoFa: twoFa.isEmpty ? nil : twoFa)
+                p.login = newLogin
+                p.pass = newPass
+            } else {
+                let api = try AwgPanelAPI(label: p.name, url: p.url, login: curLogin, password: old, verifyTls: p.verifyTls)
+                try await api.changePassword(current: old, new: newPass)
+                p.login = curLogin
+                p.token = newPass
+            }
+            store.save(p)
+            reload(p.id)
+            result = "✓ сменено на панели и сохранено в QTerm"
+            if generated {
+                XuiDialog.secret("Новый пароль админа «\(p.name)» — уже сохранён в QTerm. Скопируй в менеджер паролей.",
+                                 title: "Новый пароль", value: newPass)
+            }
+        } catch { result = "✗ " + error.localizedDescription }
     }
 
     private func deletePanel() {

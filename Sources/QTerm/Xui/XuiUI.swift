@@ -137,6 +137,50 @@ enum XuiDialog {
         return (lg, pw.stringValue, tf.stringValue.trimmingCharacters(in: .whitespaces))
     }
 
+    struct Field {
+        var label: String
+        var value = ""
+        var secure = false
+    }
+
+    /// Форма из нескольких полей (подпись над каждым). nil — отмена.
+    static func form(_ text: String, title: String, _ fields: [Field], ok: String = "OK") -> [String]? {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 4
+        var inputs: [NSTextField] = []
+        for f in fields {
+            let cap = NSTextField(labelWithString: f.label)
+            cap.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+            cap.textColor = .secondaryLabelColor
+            let t: NSTextField = f.secure ? NSSecureTextField() : NSTextField()
+            t.stringValue = f.value
+            t.translatesAutoresizingMaskIntoConstraints = false
+            t.widthAnchor.constraint(equalToConstant: 320).isActive = true
+            stack.addArrangedSubview(cap)
+            stack.addArrangedSubview(t)
+            inputs.append(t)
+        }
+        stack.frame = NSRect(x: 0, y: 0, width: 320, height: CGFloat(fields.count) * 46)
+        a.accessoryView = stack
+        a.addButton(withTitle: ok)
+        a.addButton(withTitle: "Отмена")
+        a.window.initialFirstResponder = inputs.first
+        guard a.runModal() == .alertFirstButtonReturn else { return nil }
+        return inputs.map(\.stringValue)
+    }
+
+    /// Случайный пароль без похожих символов (0/O, 1/l/I).
+    static func randomPassword(_ n: Int = 20) -> String {
+        let chars = Array("abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+        var g = SystemRandomNumberGenerator()
+        return String((0..<n).map { _ in chars[Int.random(in: 0..<chars.count, using: &g)] })
+    }
+
     /// Показать секрет (новый токен) — выделяемым текстом и с кнопкой «Копировать».
     static func secret(_ text: String, title: String, value: String) {
         let a = NSAlert()

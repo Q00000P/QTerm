@@ -845,6 +845,55 @@ public partial class XuiWindow : Window
         });
     }
 
+    /// <summary>
+    /// Узел — с главной долой, сервер остаётся сам по себе: выключить узел (главная перестаёт слать изменения
+    /// на ноду) → удалить его инбаунды на главной (на ноде они остаются) → удалить узел → отозвать токен
+    /// node-sync главной на ноде. Подписка главной больше узел не содержит.
+    /// </summary>
+    private async void NodeRemove_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedNode() is not { } r) return;
+        var ibs = _inbounds.Where(i => i.NodeId == r.Src.Id).ToList();
+        if (!XuiDialog.Confirm(this,
+                $"Убрать узел «{r.Name}» ({r.Address}) с главной?\n\n" +
+                "1) бэкап базы главной;\n2) узел выключается — главная перестаёт слать на него изменения;\n" +
+                $"3) его инбаунды на главной удаляются ({string.Join(", ", ibs.Select(i => i.Remark))}) — НА САМОЙ НОДЕ они остаются и работают;\n" +
+                "4) узел удаляется, токен главной на ноде отзывается (если токен ноды есть в QTerm).\n\n" +
+                "Из единой подписки нода пропадёт. Клиенты на главной остаются; подключить ноду обратно — «＋ Подключить ноду…».",
+                "Убрать узел", "Убрать")) return;
+        await RunOp($"Убрать узел {r.Name}", async () =>
+        {
+            var path = await XuiBackups.SaveAsync(_master!, _masterPanel?.Name ?? _master!.Label);
+            Log($"  ✓ бэкап главной → {path}", LogKind.Ok);
+            if (r.Src.Enable)
+            {
+                await _master!.SetNodeEnableAsync(r.Src.Id, false);
+                Log("  ✓ узел выключен", LogKind.Ok);
+            }
+            foreach (var ib in ibs)
+            {
+                await _master!.DeleteInboundAsync(ib.Id);
+                Log($"  ✓ инбаунд «{ib.Remark}» убран с главной", LogKind.Ok);
+            }
+            await _master!.DeleteNodeAsync(r.Src.Id);
+            Log($"  ✓ узел «{r.Name}» удалён с главной", LogKind.Ok);
+            if (r.Saved is { } saved)
+            {
+                try
+                {
+                    using var node = XuiApi.For(saved);
+                    foreach (var t in (await node.ApiTokensAsync()).Where(t =>
+                                 J.Str(t, "scope") == "node-sync" && J.Str(t, "name").StartsWith("qterm-master-")))
+                    {
+                        await node.DeleteApiTokenAsync(J.Int(t, "id"));
+                        Log($"  ✓ на ноде отозван токен «{J.Str(t, "name")}»", LogKind.Ok);
+                    }
+                }
+                catch (XuiException ex) { Log("  ! токен главной на ноде не отозван: " + ex.Message, LogKind.Warn); }
+            }
+        });
+    }
+
     private void NodeToken_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedNode() is not { } r) return;
