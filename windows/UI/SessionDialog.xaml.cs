@@ -27,6 +27,8 @@ public partial class SessionDialog : Window
         KeyCombo.Items.Add(new ComboBoxItem { Content = "(не назначен)" });
         foreach (var k in _keys)
             KeyCombo.Items.Add(new ComboBoxItem { Content = k.Name, Tag = k.Id });
+        // последний пункт — вставить ключ текстом из буфера (сохранится в вейлт)
+        KeyCombo.Items.Add(new ComboBoxItem { Content = "＋ Вставить ключ из буфера…", Tag = PasteTag, FontStyle = FontStyles.Italic });
         KeyCombo.SelectedIndex = 0; // ничего не назначаем сами
 
         if (existing is null)
@@ -59,6 +61,35 @@ public partial class SessionDialog : Window
     }
 
     private void AuthCombo_Changed(object sender, SelectionChangedEventArgs e) => UpdateAuthVisibility();
+
+    private const string PasteTag = "paste";
+    private int _lastKeyIndex;
+
+    /// <summary>«＋ Вставить ключ из буфера…» → окно «имя + ключ», новый ключ сразу выбран.</summary>
+    private void KeyCombo_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (KeyCombo.SelectedItem is not ComboBoxItem { Tag: PasteTag })
+        {
+            _lastKeyIndex = KeyCombo.SelectedIndex;
+            return;
+        }
+        var back = _lastKeyIndex;
+        var nodeName = NameBox.Text.Trim();
+        var key = KeyPasteDialog.Show(this, _repo, nodeName.Length > 0 ? nodeName + "-key" : "");
+        if (key is null)
+        {
+            KeyCombo.SelectedIndex = back;
+            return;
+        }
+        var idx = _keys.FindIndex(k => k.Id == key.Id);
+        if (idx < 0)
+        {
+            _keys.Add(key);
+            idx = _keys.Count - 1;
+            KeyCombo.Items.Insert(idx + 1, new ComboBoxItem { Content = key.Name, Tag = key.Id }); // перед «＋ Вставить…»
+        }
+        KeyCombo.SelectedIndex = idx + 1;
+    }
 
     private void UpdateAuthVisibility()
     {

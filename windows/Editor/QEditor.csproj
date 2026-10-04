@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>QEditor</AssemblyName>
     <RootNamespace>QEditor</RootNamespace>
-    <Version>3.11.6</Version>
+    <Version>3.11.7</Version>
     <!-- Своя иконка = своя кнопка в таскбаре (мак-канон: QTermEditor в доке) -->
     <ApplicationIcon>..\Assets\editor.ico</ApplicationIcon>
     <!-- Per-Monitor V2: чёткий UI и верные координаты на мониторах с разным масштабом -->

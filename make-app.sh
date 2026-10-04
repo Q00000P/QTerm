@@ -16,7 +16,7 @@ if [ -z "$SIGN_IDENTITY" ]; then
     SIGN_IDENTITY="${SIGN_IDENTITY:-QTerm Self-Signed}"
 fi
 BUILD_CONFIG="release"
-APP_VERSION="3.11.6"
+APP_VERSION="3.11.7"
 
 cd "$(dirname "$0")"
 mkdir -p build

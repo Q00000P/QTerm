@@ -14,6 +14,7 @@ struct EditSessionView: View {
     private enum KeySource: Hashable {
         case vault(UUID)
         case file
+        case paste
     }
 
     @State private var name: String
@@ -28,6 +29,9 @@ struct EditSessionView: View {
     @State private var termPath: String
     @State private var sftpPath: String
     @State private var showKeys = false
+    @State private var showPaste = false
+    /// Выбор до «＋ Вставить ключ…» — вернуть при отмене.
+    @State private var keySourceBeforePaste: KeySource = .file
 
     init(session: Session?, onSave: @escaping (Session) -> Void) {
         self.existing = session
@@ -71,6 +75,14 @@ struct EditSessionView: View {
                                 Text("🔑 \(key.name)").tag(KeySource.vault(key.id))
                             }
                             Text("Файл на диске…").tag(KeySource.file)
+                            Divider()
+                            Text("＋ Вставить ключ из буфера…").tag(KeySource.paste)
+                        }
+                        .onChange(of: keySource) { old, new in
+                            if new == .paste {
+                                keySourceBeforePaste = old
+                                showPaste = true
+                            }
                         }
                         Button("Ключи…") { showKeys = true }
                             .help("Хранилище ключей: отпечатки, публичные части, импорт")
@@ -120,6 +132,14 @@ struct EditSessionView: View {
         .sheet(isPresented: $showKeys) {
             KeyManagerView()
                 .environmentObject(state)
+        }
+        .sheet(isPresented: $showPaste, onDismiss: {
+            if keySource == .paste { keySource = keySourceBeforePaste }
+        }) {
+            KeyPasteSheet(defaultName: name.trimmingCharacters(in: .whitespaces).isEmpty ? "" : name.trimmingCharacters(in: .whitespaces) + "-key") { key in
+                if let key { keySource = .vault(key.id) }
+            }
+            .environmentObject(state)
         }
     }
 
@@ -175,6 +195,7 @@ struct EditSessionView: View {
             switch keySource {
             case .vault(let id): keyID = id
             case .file: keyPath = privateKeyPath.isEmpty ? nil : privateKeyPath
+            case .paste: break
             }
         }
 
@@ -209,6 +230,7 @@ struct EditSessionView: View {
                     if let keyPath {
                         try? state.secrets.setPassphrase(secret, forPath: (keyPath as NSString).expandingTildeInPath)
                     }
+                case .paste: break
                 }
             }
         }

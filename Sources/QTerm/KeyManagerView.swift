@@ -79,6 +79,7 @@ struct KeyManagerView: View {
     @State private var renameText = ""
     @State private var deleteCandidate: SSHKey?
     @State private var flashText: String?
+    @State private var showPaste = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -88,6 +89,8 @@ struct KeyManagerView: View {
                 if let flash = flashText {
                     Text(flash).font(.caption).foregroundStyle(.secondary)
                 }
+                Button("Вставить из буфера…") { showPaste = true }
+                    .help("Текст ключа → в вейлт, файл не нужен")
                 Button("Импортировать…") {
                     _ = state.importKeyFile()
                 }
@@ -117,6 +120,12 @@ struct KeyManagerView: View {
         }
         .padding(16)
         .frame(width: 640, height: 420)
+        .sheet(isPresented: $showPaste) {
+            KeyPasteSheet(defaultName: "") { key in
+                if let key { flash("Ключ «\(key.name)» в вейлте") }
+            }
+            .environmentObject(state)
+        }
         .alert("Переименовать ключ", isPresented: Binding(
             get: { renameKey != nil },
             set: { if !$0 { renameKey = nil } }

@@ -1440,20 +1440,30 @@ final class AppState: ObservableObject {
         panel.message = "Выбери файл приватного ключа (OpenSSH) — из любой папки"
         guard panel.runModal() == .OK, let url = panel.url,
               let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let name = PPKConverter.isPPK(raw) ? url.deletingPathExtension().lastPathComponent : url.lastPathComponent
+        return importKeyText(raw, name: name)
+    }
 
+    /// Похоже на приватный ключ (OpenSSH / PuTTY)?
+    static func looksLikeKey(_ text: String?) -> Bool {
+        guard let t = text, !t.isEmpty else { return false }
+        return t.contains("PRIVATE KEY-----") || PPKConverter.isPPK(t)
+    }
+
+    /// Текст ключа (файл или буфер) → в вейлт. PPK конвертируется, одинаковый ключ второй раз не заводится.
+    func importKeyText(_ raw0: String, name: String) -> SSHKey? {
+        let raw = raw0.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
         var content = raw
-        var name = url.lastPathComponent
 
         // .ppk конвертируем на месте — без puttygen и прочих внешних утилит.
         if PPKConverter.isPPK(raw) {
             guard let phrase = Dialogs.askPassword(
-                title: "Passphrase ключа \(url.lastPathComponent)",
+                title: "Passphrase ключа \(name)",
                 confirm: false
             ) else { return nil }
             do {
                 let result = try PPKConverter.convert(text: raw, passphrase: phrase)
                 content = result.openSSH
-                name = (url.deletingPathExtension().lastPathComponent)
                 Dialogs.info("Ключ \(result.keyType) сконвертирован из PuTTY.\nВ хранилище он лежит уже расшифрованным (сам вейлт под Touch ID), так что passphrase больше не понадобится.")
             } catch {
                 Dialogs.error("Конвертация .ppk не удалась:\n\(error.localizedDescription)")
@@ -1465,7 +1475,7 @@ final class AppState: ObservableObject {
             Dialogs.error("Не OpenSSH и не PuTTY-формат — такой ключ пока не поддерживается")
             return nil
         }
-        if let existing = sshKeys.first(where: { $0.privateKey == content }) {
+        if let existing = sshKeys.first(where: { $0.privateKey.trimmingCharacters(in: .whitespacesAndNewlines) == content.trimmingCharacters(in: .whitespacesAndNewlines) }) {
             Dialogs.info("Такой ключ уже в хранилище: «\(existing.name)»")
             return existing
         }

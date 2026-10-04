@@ -43,7 +43,7 @@
             <ComboBoxItem Content="SSH-агент"/>
         </ComboBox>
         <TextBlock x:Name="KeyLabel" Text="Ключ"/>
-        <ComboBox x:Name="KeyCombo"/>
+        <ComboBox x:Name="KeyCombo" SelectionChanged="KeyCombo_Changed"/>
         <TextBlock x:Name="PwLabel" Text="Пароль (пусто — не менять)"/>
         <PasswordBox x:Name="PwBox" Padding="5"
                      Background="{DynamicResource PanelBrush}"

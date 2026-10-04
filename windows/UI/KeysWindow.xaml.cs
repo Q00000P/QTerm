@@ -139,6 +139,13 @@ public partial class KeysWindow : Window
         Status.Text = $"Ключ «{name}» в вейлте (уедет синком)";
     }
 
+    private void Paste_Click(object sender, RoutedEventArgs e)
+    {
+        if (KeyPasteDialog.Show(this, _repo) is not { } key) return;
+        Refresh();
+        Status.Text = $"Ключ «{key.Name}» в вейлте (уедет синком)";
+    }
+
     private void ToAgent_Click(object sender, RoutedEventArgs e)
     {
         if (Selected is not { } row) return;
