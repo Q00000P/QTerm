@@ -637,7 +637,7 @@ src_write() { # stdin JSON → проверка → /etc/qcascade/sources.json
   install -d -m 755 "$QC_ETC"
   tmp=$(mktemp "$QC_ETC/.src.XXXX"); CLEAN+=("$tmp")
   cat > "$tmp"
-  out=$(jq "$SRC_JQ_VALIDATE" "$tmp" 2>&1) || die "источники не приняты: $(printf '%s' "$out" | sed 's/^jq: error[^:]*: //' | head -3)"
+  out=$(jq "$SRC_JQ_VALIDATE" "$tmp" 2>&1) || die "источники не приняты: $(printf '%s' "$out" | sed -E 's/^jq: error( \(at [^)]*\))?: //' | head -3)"
   printf '%s\n' "$out" > "$tmp"
   chmod 600 "$tmp"; mv -f "$tmp" "$SOURCES"
 }
