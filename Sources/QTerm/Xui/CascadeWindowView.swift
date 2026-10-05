@@ -292,12 +292,23 @@ struct CascadeWindowView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("MTProto-прокси этого сервера (Telegram)").font(.headline)
                 Toggle("трафик к Telegram — через каскад, по правилам (группа TG)", isOn: $m.mtpOn)
-                Text(m.mtpStateText).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("WEB-прокси (tproxy-server): сток — telemt напрямую к DC, Telegram WEB — через каскад", isOn: $m.mtpWeb)
+                        .help("Официальный сток WEB (mtproto-proxy) умеет только middle proxy, а он через ноду каскада не работает — WEB шёл бы к Telegram напрямую. С галкой сток на том же 127.0.0.1:2398, с теми же секретами профилей и под тем же пользователем mtproxy — telemt в прямом режиме (drop-in к mtproxy.service; новые профили tproxy-install.sh подхватывает сам). Рекламный канал (ad_tag) в прямом режиме не показывается. Снять галку — вернётся официальный сток.")
+                    Toggle("telemt: напрямую к DC (use_middle_proxy = false) — через каскад", isOn: $m.mtpTelemt)
+                        .help("Middle proxy (порт 8888) через ноду каскада не работает. С галкой в конфиге telemt — use_middle_proxy = false и перезапуск telemt; рекламный канал (ad_tag) в прямом режиме не показывается. Снять галку — вернётся как было, если менял qcascade.")
+                    if !m.mtpSinkSupported {
+                        Text("WEB-прокси и telemt через каскад — с qcascade 2.0.2: «Обновить до …» вверху").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.leading, 20)
+                .disabled(!m.mtpSinkSupported)
+                Text(m.mtpStateText).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Text("Пользователи процессов:").foregroundStyle(.secondary)
                     TextField("telemt mtproxy", text: $m.mtpUsers).textFieldStyle(.roundedBorder)
                 }
-                Text("mtg и teleproxy (docker) — по мосту докера, telemt и WEB (mtproto-proxy) — по пользователю процесса. Через каскад идут прямые подключения к DC Telegram (mtg, teleproxy, telemt с use_middle_proxy = false). Middle proxy (порт 8888: сток WEB-прокси, telemt по умолчанию) — напрямую: его рукопожатие привязано к IP сервера, через ноду каскада оно не сходится.")
+                Text("mtg и teleproxy (docker) — по мосту докера, telemt и WEB — по пользователю процесса. Через каскад идут прямые подключения к DC Telegram (443). Middle proxy (порт 8888) — только напрямую: его рукопожатие привязано к IP и порту сервера, через ноду каскада оно не сходится. Поэтому, пока галки выше стоят, WEB-прокси и telemt работают с DC напрямую — и весь их Telegram-трафик идёт через каскад.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -345,7 +356,7 @@ struct CascadeWindowView: View {
     private var rulesEditor: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text("rule-providers и rules — формат config.yaml Кинетика (пути /opt/etc/mihomo/… переписываются сами). Конфиг с ошибкой не встанет — работает прежний")
+                Text("rules и rule-providers — формат config.yaml Кинетика: сами правила наверху, rule-providers в конце (пути /opt/etc/mihomo/… переписываются сами). Конфиг с ошибкой не встанет — работает прежний")
                     .foregroundStyle(.secondary).lineLimit(2)
                 Spacer()
                 Button("Вернуть") { Task { await m.loadRules(force: true) } }

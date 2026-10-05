@@ -131,6 +131,8 @@ final class CascadeModel: ObservableObject {
     @Published var awgSrc = ""
     @Published var mtpOn = false
     @Published var mtpUsers = "telemt mtproxy"
+    @Published var mtpWeb = true        // WEB-прокси: сток telemt напрямую к DC (через каскад)
+    @Published var mtpTelemt = true     // telemt: use_middle_proxy = false (через каскад)
     /// Для какого сервера выбор «кто идёт» снят с сервера (автообновление его не перетирает).
     var whoFor: String?
 
@@ -563,7 +565,7 @@ final class CascadeModel: ObservableObject {
         let am = J.str(env, "awgMode")
         let awgText = am == "all" ? "все интерфейсы wg*/awg*" : am == "list" ? "интерфейсы: " + J.str(env, "awgIfaces") : "никто"
         lines.append("AWG-панель  " + awgText + (am != "off" && !J.str(env, "awgSrc").isEmpty ? " · только \(J.str(env, "awgSrc"))" : ""))
-        lines.append("MTProto     " + (J.str(env, "mtp") == "on" ? "Telegram — через каскад" : "выключено"))
+        lines.append("MTProto     " + (J.str(env, "mtp") == "on" ? "Telegram — через каскад" + Self.mtpSubsText(env, sel.flatMap { st($0).detect }?["mtp"] as? JObj) : "выключено"))
         if am != "off" || J.str(env, "mtp") == "on" {
             lines.append("nftables    " + (J.bool(s, "nf") ? "правила перехвата стоят" : "НЕ СТОЯТ — «Применить» или «Журнал»"))
         }

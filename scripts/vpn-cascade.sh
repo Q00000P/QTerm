@@ -10,6 +10,7 @@
 #   qcascade xray on|off|show|list   перехват клиентов 3x-ui (list — инбаунды и клиенты, JSON)
 #   qcascade detect                  что есть на сервере: 3x-ui, интерфейсы AWG, MTProto-прокси (JSON)
 #   qcascade nf up|down|sync|status  сетевой перехват AWG-интерфейсов и MTProto (зовёт сам сервис)
+#   qcascade websink status|sync|off сток WEB-прокси: telemt напрямую к DC, пока MTProto идёт через каскад
 #   qcascade set K=V… | set -        настройки (QC_DIRECT_TARGET, QC_XRAY_MODE, QC_AWG_MODE, QC_MTP, QC_RESERVE…)
 #   qcascade config                  визард
 #   qcascade update-core             обновить ядро mihomo (с проверкой и откатом)
@@ -18,11 +19,12 @@
 #
 # Секреты (ссылки подписок, ключи WireGuard, secret API) — только в /etc/qcascade (600) на сервере.
 # Неинтерактивно: QC_SUB_URL (первый источник), QC_DIRECT_TARGET, QC_XRAY_MODE=all|inbounds|users|off, QC_XRAY_LIST,
-# QC_AWG_MODE=off|all|list + QC_AWG_IFACES, QC_MTP=on|off, QC_RESERVE, QC_MIHOMO_URL / QC_MIHOMO_REPO + QC_GH_TOKEN,
+# QC_AWG_MODE=off|all|list + QC_AWG_IFACES, QC_MTP=on|off (+ QC_MTP_WEB / QC_MTP_TELEMT=direct|middle), QC_RESERVE,
+# QC_MIHOMO_URL / QC_MIHOMO_REPO + QC_GH_TOKEN,
 # QC_SOURCES_FILE (JSON источников для install; файл удаляется).
 
 set -Eeuo pipefail
-VERSION="2.0.1"
+VERSION="2.0.2"
 
 QC_ROOT=${QC_ROOT:-}            # только для тестов: префикс всех путей
 QC_ETC=$QC_ROOT/etc/qcascade
@@ -42,7 +44,7 @@ TG_CIDR=$QC_HOME/telegram-cidr.txt
 BK=$QC_ETC/backup
 SVC=qcascade
 XUI_DIR=${XUI_DIR:-/usr/local/x-ui}
-ENV_KEYS="QC_SECRET QC_PORT QC_API QC_TPROXY_PORT QC_DIRECT_TARGET QC_XRAY_MODE QC_XRAY_LIST QC_AWG_MODE QC_AWG_IFACES QC_AWG_SRC QC_MTP QC_MTP_USERS QC_RESERVE QC_MIHOMO_URL QC_MIHOMO_REPO"
+ENV_KEYS="QC_SECRET QC_PORT QC_API QC_TPROXY_PORT QC_DIRECT_TARGET QC_XRAY_MODE QC_XRAY_LIST QC_AWG_MODE QC_AWG_IFACES QC_AWG_SRC QC_MTP QC_MTP_USERS QC_MTP_WEB QC_MTP_TELEMT QC_RESERVE QC_MIHOMO_URL QC_MIHOMO_REPO"
 
 # сетевой перехват: метка пакетов, таблица маршрутов, приоритет правила (менять — только вместе: nf down → nf up)
 NF_MARK=0x2a0
@@ -117,7 +119,7 @@ save_env() {
 defaults() {
   : "${QC_PORT:=7893}" "${QC_API:=127.0.0.1:19090}" "${QC_TPROXY_PORT:=7895}" "${QC_DIRECT_TARGET:=DIRECT}" \
     "${QC_XRAY_MODE:=all}" "${QC_XRAY_LIST:=}" "${QC_AWG_MODE:=off}" "${QC_AWG_IFACES:=}" "${QC_AWG_SRC:=}" \
-    "${QC_MTP:=off}" "${QC_MTP_USERS:=telemt mtproxy}" "${QC_RESERVE:=}" \
+    "${QC_MTP:=off}" "${QC_MTP_USERS:=telemt mtproxy}" "${QC_MTP_WEB:=direct}" "${QC_MTP_TELEMT:=direct}" "${QC_RESERVE:=}" \
     "${QC_MIHOMO_URL:=}" "${QC_MIHOMO_REPO:=}" "${QC_SUB_URL:=}"
   [ -n "${QC_SECRET:-}" ] || QC_SECRET=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 }
@@ -194,11 +196,54 @@ mh_ver() { "$QC_BIN" -v 2>/dev/null | awk 'NR==1{print $3}'; }
 write_default_rules() {
   [ -f "$RULES" ] && return 0
   cat > "$RULES" <<'EOF'
-# Правила — тот же формат, что в config.yaml Кинетика: секции rule-providers и rules.
+# Правила — тот же формат, что в config.yaml Кинетика: секции rules и rule-providers (порядок любой).
 # Пути /opt/etc/mihomo/... и ./rule-sets/... переписываются автоматически.
 # Провайдеры type: file берутся из /etc/qcascade/rule-sets/<имя файла>.mrs (свои .mrs Кинетика
 # встроены в скрипт); если файла нет — провайдер и его правила пропускаются (видно в qcascade status).
 # После правки: qcascade apply
+
+rules:
+#     Youtube
+  - RULE-SET,youtube,MSK
+  - DOMAIN-SUFFIX,myip.ms,DIRECT
+  - DOMAIN-SUFFIX,myip.fi,DIRECT
+  - DOMAIN-SUFFIX,myip.nl,DIRECT
+  - DOMAIN-SUFFIX,myip.com,MSK
+  - DOMAIN-SUFFIX,myip.uz,DIRECT
+  - DOMAIN-SUFFIX,myip.qa,DIRECT
+  - DOMAIN,myip.ch,SP
+
+#       MAX
+  - RULE-SET,max-domains,REJECT
+  - RULE-SET,max-ip,REJECT
+
+#     Блок рекламы, RULE-SET,quic  REJECT
+#  - OR,((RULE-SET,hagezi_pro),(RULE-SET,ads),(RULE-SET,quic)),REJECT
+  - RULE-SET,hagezi_pro,REJECT
+  - RULE-SET,ads,REJECT
+  - RULE-SET,quic,REJECT
+  - DOMAIN-SUFFIX,adobedtm.com,REJECT
+
+  - RULE-SET,facebook,FII
+  - RULE-SET,facebook-ip,FII
+  - RULE-SET,whatsapp,FII
+  - RULE-SET,whatsapp-ip,FII
+  - DOMAIN-SUFFIX,my.telegram.org,FII
+  - RULE-SET,tg-ip,TG
+  - RULE-SET,tg,TG
+  - RULE-SET,zoom,FII
+  - DOMAIN-SUFFIX,stacksocial.com,FI
+
+#     Российский трафик & блокировки
+  - RULE-SET,category_gov_ru,DIRECT
+  - RULE-SET,yandex,DIRECT
+  - RULE-SET,ru_sites,DIRECT
+  - RULE-SET,geoip_ru,DIRECT
+  - RULE-SET,bosh,EU
+  - RULE-SET,media_ru,DIRECT
+
+  - RULE-SET,bundle,T
+  - MATCH,DIRECT
 
 rule-providers:
   ip-checkers:
@@ -516,49 +561,6 @@ rule-providers:
     behavior: classical
     payload:
       - AND,((NETWORK,udp),(DST-PORT,443))
-
-rules:
-#     Youtube
-  - RULE-SET,youtube,MSK
-  - DOMAIN-SUFFIX,myip.ms,DIRECT
-  - DOMAIN-SUFFIX,myip.fi,DIRECT
-  - DOMAIN-SUFFIX,myip.nl,DIRECT
-  - DOMAIN-SUFFIX,myip.com,MSK
-  - DOMAIN-SUFFIX,myip.uz,DIRECT
-  - DOMAIN-SUFFIX,myip.qa,DIRECT
-  - DOMAIN,myip.ch,SP
-
-#       MAX
-  - RULE-SET,max-domains,REJECT
-  - RULE-SET,max-ip,REJECT
-
-#     Блок рекламы, RULE-SET,quic  REJECT
-#  - OR,((RULE-SET,hagezi_pro),(RULE-SET,ads),(RULE-SET,quic)),REJECT
-  - RULE-SET,hagezi_pro,REJECT
-  - RULE-SET,ads,REJECT
-  - RULE-SET,quic,REJECT
-  - DOMAIN-SUFFIX,adobedtm.com,REJECT
-
-  - RULE-SET,facebook,FII
-  - RULE-SET,facebook-ip,FII
-  - RULE-SET,whatsapp,FII
-  - RULE-SET,whatsapp-ip,FII
-  - DOMAIN-SUFFIX,my.telegram.org,FII
-  - RULE-SET,tg-ip,TG
-  - RULE-SET,tg,TG
-  - RULE-SET,zoom,FII
-  - DOMAIN-SUFFIX,stacksocial.com,FI
-
-#     Российский трафик & блокировки
-  - RULE-SET,category_gov_ru,DIRECT
-  - RULE-SET,yandex,DIRECT
-  - RULE-SET,ru_sites,DIRECT
-  - RULE-SET,geoip_ru,DIRECT
-  - RULE-SET,bosh,EU
-  - RULE-SET,media_ru,DIRECT
-
-  - RULE-SET,bundle,T
-  - MATCH,DIRECT
 EOF
 }
 
@@ -581,6 +583,51 @@ T    fallback 60  LV LV-HYS
 MSK  fallback 60  MSK MSK-HYS
 NL   fallback 60  NL1 NL1-HYS NL2 NL2-HYS NL3 NL3-HYS
 EOF
+}
+
+# rules.yaml установок до 2.0.2: rule-providers стояли первыми. Правят правила, провайдеры — редко: при обновлении
+# rules переезжает наверх, rule-providers — в конец (комментарии-шапки едут со своей секцией, строки не теряются).
+rules_reorder() {
+  [ -s "$RULES" ] || return 0
+  local order tmp
+  order=$(awk '/^[^ \t#]/ { k=$0; sub(/:.*/, "", k); if (k=="rules" && !r) r=NR; if (k=="rule-providers" && !p) p=NR }
+               END { print ((p && r && p < r) ? "swap" : "ok") }' "$RULES")
+  [ "$order" = swap ] || return 0
+  tmp=$(mktemp "$QC_ETC/.rules.XXXX"); CLEAN+=("$tmp")
+  awk '
+    function keep(t) { if (ns == 0) pre[++npre] = t; else line[ns, ++n[ns]] = t }
+    function emit(s,   i, a, b) {
+      a = 1; while (a <= n[s] && line[s, a] ~ /^[ \t]*$/) a++
+      b = n[s]; while (b >= a && line[s, b] ~ /^[ \t]*$/) b--
+      if (out) print ""
+      for (i = a; i <= b; i++) print line[s, i]
+      out = 1
+    }
+    /^[^ \t#]/ {
+      k = $0; sub(/:.*/, "", k); ns++; key[ns] = k; n[ns] = 0
+      # комментарии/пустые перед первым ключом — шапка файла, перед остальными — шапка этой секции
+      for (i = 1; i <= np; i++) { if (ns == 1) pre[++npre] = pend[i]; else line[ns, ++n[ns]] = pend[i] }
+      np = 0; line[ns, ++n[ns]] = $0; next
+    }
+    /^#/ || /^[ \t]*$/ { pend[++np] = $0; next }
+    { for (i = 1; i <= np; i++) keep(pend[i]); np = 0; keep($0) }
+    END {
+      for (i = 1; i <= np; i++) keep(pend[i])
+      b = npre; while (b >= 1 && pre[b] ~ /^[ \t]*$/) b--
+      for (i = 1; i <= b; i++) print pre[i]
+      out = (b > 0)
+      for (s = 1; s <= ns; s++) if (key[s] == "rules") emit(s)
+      for (s = 1; s <= ns; s++) if (key[s] != "rules" && key[s] != "rule-providers") emit(s)
+      for (s = 1; s <= ns; s++) if (key[s] == "rule-providers") emit(s)
+    }' "$RULES" > "$tmp"
+  # страховка: те же непустые строки, только в другом порядке
+  if [ "$(grep -v '^[[:space:]]*$' "$RULES" | sort | md5sum)" != "$(grep -v '^[[:space:]]*$' "$tmp" | sort | md5sum)" ]; then
+    warn "rules.yaml не переставлен (сверка строк не сошлась) — оставлен как был"; return 0
+  fi
+  sed -i 's/^# Правила — тот же формат, что в config.yaml Кинетика: секции rule-providers и rules\.$/# Правила — тот же формат, что в config.yaml Кинетика: секции rules и rule-providers (порядок любой)./' "$tmp"
+  cp -f "$RULES" "$RULES.before-2.0.2"
+  cat "$tmp" > "$RULES"
+  ok "rules.yaml: правила — наверху, rule-providers — в конце (прежний: $RULES.before-2.0.2)"
 }
 
 # ───────────────────────────── локальные rule-sets с Кинетика ─────────────────────────────
@@ -1025,8 +1072,8 @@ EOF
     if [ -s "$d/providers.yaml" ]; then echo ""; echo "proxy-providers:"; cat "$d/providers.yaml"; fi
     echo ""
     cat "$d/pg"; echo
-    cat "$d/rprov"; echo
-    cat "$d/rules"
+    cat "$d/rules"                       # как в rules.yaml: сами правила, rule-providers — в конце
+    if [ -s "$d/rprov" ]; then echo; cat "$d/rprov"; fi
   } > "$out"
 
   jq -n --rawfile names "$d/names" --rawfile missing "$d/missing" --rawfile ph "$d/placeholders" \
@@ -1096,6 +1143,7 @@ cmd_apply() {
   if [ "$if_changed" = 1 ] && [ -f "$CFG" ] && cmp -s "$new" "$CFG" && systemctl is-active -q "$SVC"; then
     install -m 644 "$st_new" "$STATE"
     nf_sync
+    mtp_sync
     say "без изменений"; return 0
   fi
 
@@ -1121,6 +1169,7 @@ cmd_apply() {
     journalctl -u "$SVC" -n 15 --no-pager 2>/dev/null | sed 's/^/       /' >&2 || true
     return 1
   fi
+  mtp_sync
   report_state
 }
 
@@ -1312,8 +1361,8 @@ detect_json() {
           | jq -R 'split("\t") | {name:.[0], image:(.[1] // "")}' | jq -s .)
   fi
   jq -n --argjson xui "$xui" --argjson ib "$ib" --argjson em "$em" --argjson awg "$awg" \
-        --argjson users "$users" --argjson ctr "$ctr" --argjson docker "$docker" \
-    '{xui:$xui, inbounds:$ib, emails:$em, awg:$awg, mtp:{users:$users, docker:$docker, containers:$ctr}}'
+        --argjson users "$users" --argjson ctr "$ctr" --argjson docker "$docker" --argjson more "$(mtp_json)" \
+    '{xui:$xui, inbounds:$ib, emails:$em, awg:$awg, mtp:({users:$users, docker:$docker, containers:$ctr} + $more)}'
 }
 # ───────────────────────────── 3x-ui / xray ─────────────────────────────
 xui_env() { systemctl show x-ui -p Environment --value 2>/dev/null || true; }
@@ -1446,6 +1495,218 @@ xray_state() { # печатает режим из живого конфига
          else .[0] | if .user then "users: " + (.user|join(" ")) elif .inboundTag then "inbounds: " + (.inboundTag|join(" ")) else "all" end end' "$f" 2>/dev/null || echo "?"
 }
 
+# ───────────────────── MTProto через каскад: WEB-прокси и telemt — напрямую к DC ─────────────────────
+# Middle proxy Telegram (порт 8888) через ноду каскада не работает: его рукопожатие привязано к IP и порту сервера,
+# а нода подставляет свои. Через каскад идут только прямые подключения к DC (443). Поэтому, пока MTProto идёт
+# через каскад (QC_MTP=on):
+#  • WEB-прокси (tproxy-server): вместо официального стока MTProxy (умеет только middle proxy) — telemt в прямом
+#    режиме на том же 127.0.0.1:2398, с теми же секретами профилей, под тем же пользователем mtproxy
+#    (drop-in к mtproxy.service; секреты перечитываются при каждом старте стока). QC_MTP_WEB=direct|middle;
+#  • telemt: use_middle_proxy = false (вернётся true при выключении, если меняли мы). QC_MTP_TELEMT=direct|middle.
+WEB_CFG=/etc/tproxy-server/config.json
+WEB_ENV=/etc/mtproxy/mtproxy.env
+WEB_UNIT=mtproxy
+WEB_DROPIN=/etc/systemd/system/mtproxy.service.d/zz-qcascade-direct.conf
+WEB_PORT=2398
+WEBSINK_CONF=$QC_ETC/websink.toml
+WEBSINK_DIR=$QC_ROOT/var/lib/qcascade-websink
+TELEMT_CONFS="/opt/telemt/telemt.toml /etc/telemt/telemt.toml"
+
+mtp_user_on() { [[ " $QC_MTP_USERS " == *" $1 "* ]] && id -u "$1" >/dev/null 2>&1; }
+
+websink_present() { [ -f "$QC_ROOT$WEB_CFG" ] && [ -f "$QC_ROOT$WEB_ENV" ] && systemctl cat "$WEB_UNIT" >/dev/null 2>&1; }
+
+websink_want() {
+  [ "$QC_MTP" = on ] && [ "${QC_MTP_WEB:-direct}" = direct ] && mtp_user_on mtproxy && websink_present
+}
+
+websink_secrets() { # секреты профилей WEB из env стока: MTPROXY_SECRET и -S … из MTPROXY_EXTRA_ARGS
+  { grep -E '^(MTPROXY_SECRET|MTPROXY_EXTRA_ARGS)=' "$QC_ROOT$WEB_ENV" 2>/dev/null || true; } \
+    | grep -oE '[0-9a-fA-F]{32}' | tr 'A-F' 'a-f' | awk '!s[$0]++' || true
+}
+
+websink_conf() { # конфиг telemt-стока из секретов WEB; зовётся и из ExecStartPre стока — новые профили подхватываются сами
+  local s i=0 body="" tmp
+  while IFS= read -r s; do [ -n "$s" ] || continue; i=$((i+1)); body+="web$i = \"$s\""$'\n'; done < <(websink_secrets)
+  [ $i -gt 0 ] || { err "в $WEB_ENV нет секретов профилей WEB-прокси"; return 1; }
+  install -d -m 755 "$QC_ETC"
+  tmp=$(mktemp "$QC_ETC/.websink.XXXX"); CLEAN+=("$tmp")
+  cat > "$tmp" <<EOF
+# qcascade: сток WEB-прокси — telemt напрямую к DC (через каскад). Собран из $WEB_ENV, руками не править.
+[general]
+use_middle_proxy = false
+log_level = "normal"
+
+[general.modes]
+classic = true
+secure = true
+tls = false
+
+[server]
+port = $WEB_PORT
+
+[server.api]
+enabled = false
+
+[[server.listeners]]
+ip = "127.0.0.1"
+
+[censorship]
+mask = false
+tls_emulation = false
+tls_front_dir = "${WEBSINK_DIR#"$QC_ROOT"}/tlsfront"
+
+[access.users]
+$body
+EOF
+  chmod 640 "$tmp"; chgrp mtproxy "$tmp" 2>/dev/null || true
+  if [ -f "$WEBSINK_CONF" ] && cmp -s "$tmp" "$WEBSINK_CONF"; then rm -f "$tmp"; else mv -f "$tmp" "$WEBSINK_CONF"; fi
+  return 0
+}
+
+websink_bin() { # telemt: от установщика telemt (/bin/telemt) или свой в $QC_LIB (скачивается с GitHub)
+  local b arch libc url tmp
+  for b in /bin/telemt /usr/local/bin/telemt "${QC_LIB#"$QC_ROOT"}/telemt"; do
+    [ -x "$QC_ROOT$b" ] && { echo "$b"; return 0; }
+  done
+  case "$(uname -m)" in x86_64|amd64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) err "telemt: архитектура $(uname -m) не поддерживается"; return 1 ;; esac
+  libc=gnu; { ldd --version 2>&1 || true; } | grep -qi musl && libc=musl
+  url=https://github.com/telemt/telemt/releases/latest/download/telemt-$arch-linux-$libc.tar.gz
+  tmp=$(mktemp -d); CLEAN+=("$tmp")
+  # напрямую, а если GitHub с сервера не открывается — через сам каскад (mixed-порт mihomo)
+  if ! curl -fsSL --max-time 180 -o "$tmp/t.tgz" "$url" 2>/dev/null \
+     && ! curl -fsSL --max-time 180 -x "http://127.0.0.1:$QC_PORT" -o "$tmp/t.tgz" "$url" 2>/dev/null; then
+    err "не скачал telemt: $url"; return 1
+  fi
+  tar -xzf "$tmp/t.tgz" -C "$tmp" 2>/dev/null && [ -f "$tmp/telemt" ] || { err "в архиве telemt нет бинарника"; return 1; }
+  chmod 755 "$tmp/telemt"
+  "$tmp/telemt" --version >/dev/null 2>&1 || { err "скачанный telemt не запускается"; return 1; }
+  install -d -m 755 "$QC_LIB"; install -m 755 "$tmp/telemt" "$QC_LIB/telemt"
+  echo "${QC_LIB#"$QC_ROOT"}/telemt"
+}
+
+websink_dropin() { # текст drop-in стока (по нему же сверяем, стоит ли)
+  cat <<EOF
+# qcascade: WEB-прокси через каскад — сток telemt напрямую к DC вместо официального MTProxy (тот умеет только
+# middle proxy, а его рукопожатие через ноду каскада не сходится). Снять: qcascade set QC_MTP_WEB=middle && qcascade apply
+[Service]
+Type=simple
+User=mtproxy
+Group=mtproxy
+ExecStartPre=+${QC_SELF#"$QC_ROOT"} websink conf
+ExecStart=
+ExecStart=$1 ${WEBSINK_CONF#"$QC_ROOT"}
+WorkingDirectory=${WEBSINK_DIR#"$QC_ROOT"}
+ReadWritePaths=${WEBSINK_DIR#"$QC_ROOT"}
+LimitNOFILE=65536
+EOF
+}
+
+websink_wait() { # telemt слушает 127.0.0.1:2398 (старт ~15 с — сначала проверяет DC)
+  local i
+  for ((i=0; i<60; i++)); do
+    ss -Hltnp "( sport = :$WEB_PORT )" 2>/dev/null | grep -q '"telemt"' && return 0
+    sleep 1
+  done
+  return 1
+}
+
+websink_off() {
+  local d=$QC_ROOT$WEB_DROPIN
+  [ -f "$d" ] || return 0
+  rm -f "$d"; systemctl daemon-reload
+  systemctl restart "$WEB_UNIT" 2>/dev/null || true
+  ok "WEB-прокси: сток — снова официальный MTProxy (middle proxy, к Telegram напрямую)"
+}
+
+websink_sync() { # привести сток WEB к настройкам; если менять нечего — только проверка, что сток жив
+  local d=$QC_ROOT$WEB_DROPIN bin text
+  websink_want || { websink_off; return 0; }
+  bin=$(websink_bin) || { warn "WEB-прокси: без telemt сток остаётся официальным (middle proxy, к Telegram напрямую)"; return 0; }
+  websink_conf || return 0
+  install -d -m 750 -o mtproxy -g mtproxy "$WEBSINK_DIR" "$WEBSINK_DIR/tlsfront" 2>/dev/null \
+    || install -d -m 750 "$WEBSINK_DIR" "$WEBSINK_DIR/tlsfront"
+  text=$(websink_dropin "$bin")
+  if [ -f "$d" ] && [ "$(cat "$d")" = "$text" ]; then
+    systemctl is-active -q "$WEB_UNIT" || systemctl restart "$WEB_UNIT" 2>/dev/null || true
+    return 0
+  fi
+  install -d -m 755 "$(dirname "$d")"; printf '%s\n' "$text" > "$d"
+  systemctl daemon-reload
+  systemctl restart "$WEB_UNIT" 2>/dev/null || true
+  if websink_wait; then
+    ok "WEB-прокси: сток — telemt напрямую к DC, Telegram-трафик WEB идёт через каскад (группа TG)"
+    curl -fs --max-time 3 -o /dev/null http://127.0.0.1:8081/readyz 2>/dev/null \
+      || warn "WEB-прокси: tproxy-server ещё не ready — проверь через минуту (tproxy-install.sh → статус)"
+  else
+    err "WEB-прокси: telemt-сток не поднялся — возвращаю официальный MTProxy:"
+    journalctl -u "$WEB_UNIT" -n 12 --no-pager 2>/dev/null | sed 's/^/       /' >&2 || true
+    rm -f "$d"; systemctl daemon-reload; systemctl restart "$WEB_UNIT" 2>/dev/null || true
+  fi
+  return 0
+}
+
+telemt_conf() { local f; for f in $TELEMT_CONFS; do [ -f "$QC_ROOT$f" ] && { echo "$QC_ROOT$f"; return 0; }; done; return 1; }
+
+telemt_middle() { # true | false | "" (ключа нет — у telemt тогда middle proxy) — use_middle_proxy в конфиге telemt
+  awk -F= '/^[ \t]*use_middle_proxy[ \t]*=/ { v=$2; sub(/#.*/, "", v); gsub(/[ \t"]/, "", v); print v; exit }' "$1" 2>/dev/null || true
+}
+
+telemt_sync() { # telemt: напрямую к DC, пока MTProto идёт через каскад; вернуть middle proxy — только если меняли мы
+  local f cur mark=$QC_HOME/telemt.middle-off was
+  f=$(telemt_conf) || return 0
+  cur=$(telemt_middle "$f")
+  if [ "$QC_MTP" = on ] && [ "${QC_MTP_TELEMT:-direct}" = direct ] && mtp_user_on telemt; then
+    case $cur in
+      false) return 0 ;;
+      true) sed -i -E 's/^([ \t]*use_middle_proxy[ \t]*=[ \t]*)true/\1false/' "$f"; was=true ;;
+      "") was=absent   # ключа нет — по умолчанию у telemt middle proxy
+          if grep -qE '^[ \t]*\[general\][ \t]*(#.*)?$' "$f"; then
+            sed -i -E '0,/^[ \t]*\[general\][ \t]*(#.*)?$/s//&\nuse_middle_proxy = false # qcascade/' "$f"
+          else
+            printf '\n[general]\nuse_middle_proxy = false # qcascade\n' >> "$f"
+          fi ;;
+      *) warn "telemt: в $f use_middle_proxy = $cur — не трогаю"; return 0 ;;
+    esac
+    [ "$(telemt_middle "$f")" = false ] || { warn "telemt: не смог выставить use_middle_proxy = false в $f — telemt идёт к Telegram напрямую"; return 0; }
+    echo "$was" > "$mark"
+    systemctl restart telemt 2>/dev/null || true
+    ok "telemt: напрямую к DC (use_middle_proxy = false) — его Telegram-трафик идёт через каскад"
+  else
+    [ -f "$mark" ] || return 0
+    was=$(cat "$mark" 2>/dev/null); rm -f "$mark"
+    [ "$cur" = false ] || return 0
+    if [ "$was" = absent ]; then
+      sed -i -E '/^[ \t]*use_middle_proxy[ \t]*=[ \t]*false[ \t]*# qcascade[ \t]*$/d' "$f"
+    else
+      sed -i -E 's/^([ \t]*use_middle_proxy[ \t]*=[ \t]*)false/\1true/' "$f"
+    fi
+    systemctl restart telemt 2>/dev/null || true
+    ok "telemt: снова через middle proxy, как было до каскада"
+  fi
+  return 0
+}
+
+mtp_sync() { websink_sync; telemt_sync; }
+
+mtp_json() { # для detect: WEB-прокси (какой сток) и telemt (middle proxy или напрямую)
+  local web=false sink="" tm=false mid=""
+  if websink_present; then web=true; if [ -f "$QC_ROOT$WEB_DROPIN" ]; then sink=telemt; else sink=mtproxy; fi; fi
+  local f; if f=$(telemt_conf); then tm=true; mid=$(telemt_middle "$f"); fi
+  jq -n --argjson web "$web" --arg sink "$sink" --argjson tm "$tm" --arg mid "$mid" \
+    '{web:{present:$web, sink:$sink}, telemt:{present:$tm, middle:($mid != "false")}}'
+}
+
+cmd_websink() {
+  need_root; load_env; defaults
+  case ${1:-status} in
+    conf)   websink_conf ;;
+    sync)   websink_sync ;;
+    off)    websink_off ;;
+    status) mtp_json ;;
+    *) die "qcascade websink conf|sync|off|status" ;;
+  esac
+}
 
 cmd_xray() {
   need_root; load_env; defaults
@@ -1587,7 +1848,7 @@ cmd_install() {
   id qcascade >/dev/null 2>&1 || useradd --system --no-create-home --home-dir "$QC_HOME" --shell /usr/sbin/nologin qcascade
   install -d -m 755 "$QC_ETC" "$RSDIR" "$QC_LIB"
   install -d -m 750 -o qcascade -g qcascade "$QC_HOME" "$PROV_DIR"
-  write_default_rules; write_default_groups; install_bundled_rulesets
+  write_default_rules; rules_reorder; write_default_groups; install_bundled_rulesets
   ok "$QC_ETC (источники: sources.json, правила: rules.yaml, группы: groups.conf, rule-sets/), данные: $QC_HOME"
   if [ -n "${QC_SOURCES_FILE:-}" ]; then   # источники от QTerm (до установки jq на сервере могло не быть)
     if [ -s "$QC_SOURCES_FILE" ]; then src_write < "$QC_SOURCES_FILE"; ok "источники из QTerm: $(src_json | jq '.sources|length')"; fi
@@ -1711,10 +1972,11 @@ cmd_status() {
           --arg mu "$QC_MIHOMO_URL" --arg api "$QC_API" --argjson port "${QC_PORT:-0}" --argjson sub "$subset" \
           --arg am "$QC_AWG_MODE" --arg ai "$QC_AWG_IFACES" --arg asrc "$QC_AWG_SRC" --arg mtp "$QC_MTP" \
           --arg res "$QC_RESERVE" --argjson nf "$nfa" --argjson srcs "$srcs" --arg mtpu "$QC_MTP_USERS" --argjson pend "$pend" \
+          --arg mweb "$QC_MTP_WEB" --arg mtel "$QC_MTP_TELEMT" \
       '{qcascade:$v, installed:$installed, mihomo:{active:$active, version:$ver}, xray:$xray, groups:$groups,
         state:($st[0] // {}), sources:$srcs, nf:$nf, pending:$pend,
         env:{directTarget:$dt, xrayMode:$xm, xrayList:$xl, mihomoUrl:$mu, api:$api, port:$port, subSet:$sub,
-             awgMode:$am, awgIfaces:$ai, awgSrc:$asrc, mtp:$mtp, mtpUsers:$mtpu, reserve:$res}}'
+             awgMode:$am, awgIfaces:$ai, awgSrc:$asrc, mtp:$mtp, mtpUsers:$mtpu, mtpWeb:$mweb, mtpTelemt:$mtel, reserve:$res}}'
     return 0
   fi
   printf '%sqcascade %s%s\n' "$C_B" "$VERSION" "$C_0"
@@ -1739,7 +2001,7 @@ cmd_status() {
 }
 
 # ───────────────────────────── set / sources ─────────────────────────────
-SET_KEYS="QC_SUB_URL QC_DIRECT_TARGET QC_XRAY_MODE QC_XRAY_LIST QC_AWG_MODE QC_AWG_IFACES QC_AWG_SRC QC_MTP QC_MTP_USERS QC_RESERVE QC_MIHOMO_URL QC_MIHOMO_REPO QC_PORT QC_API QC_TPROXY_PORT"
+SET_KEYS="QC_SUB_URL QC_DIRECT_TARGET QC_XRAY_MODE QC_XRAY_LIST QC_AWG_MODE QC_AWG_IFACES QC_AWG_SRC QC_MTP QC_MTP_USERS QC_MTP_WEB QC_MTP_TELEMT QC_RESERVE QC_MIHOMO_URL QC_MIHOMO_REPO QC_PORT QC_API QC_TPROXY_PORT"
 cmd_set() { # set K=V … | set - (K=V построчно из stdin — так секреты не светятся в ps)
   need_root; load_env; defaults
   local kv k v n=0 lines=()
@@ -1754,6 +2016,7 @@ cmd_set() { # set K=V … | set - (K=V построчно из stdin — так 
       QC_XRAY_MODE) case $v in all|inbounds|users|off) ;; *) die "QC_XRAY_MODE: all|inbounds|users|off" ;; esac ;;
       QC_AWG_MODE) case $v in all|list|off) ;; *) die "QC_AWG_MODE: all|list|off" ;; esac ;;
       QC_MTP) case $v in on|off) ;; *) die "QC_MTP: on|off" ;; esac ;;
+      QC_MTP_WEB|QC_MTP_TELEMT) case $v in direct|middle) ;; *) die "$k: direct|middle" ;; esac ;;
       QC_PORT|QC_TPROXY_PORT) [[ "$v" =~ ^[0-9]+$ ]] || die "$k — число" ;;
       QC_AWG_IFACES) [[ "$v" =~ ^[A-Za-z0-9._\ -]*$ ]] || die "QC_AWG_IFACES — имена интерфейсов через пробел" ;;
       QC_AWG_SRC) [[ "$v" =~ ^[0-9./\ ]*$ ]] || die "QC_AWG_SRC — IPv4-адреса/подсети через пробел" ;;
@@ -1793,6 +2056,7 @@ cmd_uninstall() {
   if systemctl cat x-ui >/dev/null 2>&1 && [ "$(xray_state)" != off ]; then xray_hook off || die "не снял перехват Xray — остановка mihomo оставила бы клиентов без сети"; fi
   systemctl disable --now "$SVC" "$SVC-refresh.timer" 2>/dev/null || true
   nf_down
+  websink_off; QC_MTP=off; telemt_sync
   rm -f /etc/systemd/system/$SVC.service /etc/systemd/system/$SVC-refresh.service /etc/systemd/system/$SVC-refresh.timer
   systemctl daemon-reload
   rm -rf "$QC_LIB"; rm -f "$QC_SELF"
@@ -1816,6 +2080,7 @@ main() {
     sources)            cmd_sources "$@" ;;
     xray)               cmd_xray "$@" ;;
     detect)             need_root; load_env; defaults; detect_json ;;
+    websink)            cmd_websink "$@" ;;
     nf)                 cmd_nf "$@" ;;
     config)             cmd_config ;;
     update-core)        cmd_update_core ;;

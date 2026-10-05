@@ -253,6 +253,14 @@
                             <StackPanel>
                                 <TextBlock Text="MTProto-прокси этого сервера (Telegram)" Style="{StaticResource Head}"/>
                                 <CheckBox x:Name="MtpBox" Content="трафик к Telegram — через каскад, по правилам (группа TG)"/>
+                                <CheckBox x:Name="MtpWebBox" Margin="20,6,0,0"
+                                          Content="WEB-прокси (tproxy-server): сток — telemt напрямую к DC, Telegram WEB — через каскад"
+                                          ToolTip="Официальный сток WEB (mtproto-proxy) умеет только middle proxy, а он через ноду каскада не работает — WEB шёл бы к Telegram напрямую. С галкой сток на том же 127.0.0.1:2398, с теми же секретами профилей и под тем же пользователем mtproxy — telemt в прямом режиме (drop-in к mtproxy.service; новые профили tproxy-install.sh подхватывает сам). Рекламный канал (ad_tag) в прямом режиме не показывается. Снять галку — вернётся официальный сток."/>
+                                <CheckBox x:Name="MtpTelemtBox" Margin="20,4,0,0"
+                                          Content="telemt: напрямую к DC (use_middle_proxy = false) — через каскад"
+                                          ToolTip="Middle proxy (порт 8888) через ноду каскада не работает. С галкой в конфиге telemt — use_middle_proxy = false и перезапуск telemt; рекламный канал (ad_tag) в прямом режиме не показывается. Снять галку — вернётся как было, если менял qcascade."/>
+                                <TextBlock x:Name="MtpVerNote" Style="{StaticResource Dim}" Margin="20,2,0,0" Visibility="Collapsed"
+                                           Text="WEB-прокси и telemt через каскад — с qcascade 2.0.2: «Обновить до …» вверху"/>
                                 <TextBlock x:Name="MtpState" Style="{StaticResource Dim}" Margin="0,4,0,6"/>
                                 <DockPanel>
                                     <TextBlock Text="Пользователи процессов:" Style="{StaticResource Dim}" Margin="0,0,8,0"/>
@@ -260,7 +268,7 @@
                                              ToolTip="Системные пользователи MTProto-процессов вне докера: telemt, mtproxy (WEB). mtg и teleproxy в докере ловятся сами"/>
                                 </DockPanel>
                                 <TextBlock Style="{StaticResource Dim}" Margin="0,6,0,0"
-                                           Text="mtg и teleproxy (docker) — по мосту докера, telemt и WEB (mtproto-proxy) — по пользователю процесса. Через каскад идут прямые подключения к DC Telegram (mtg, teleproxy, telemt с use_middle_proxy = false). Middle proxy (порт 8888: сток WEB-прокси, telemt по умолчанию) — напрямую: его рукопожатие привязано к IP сервера, через ноду каскада оно не сходится."/>
+                                           Text="mtg и teleproxy (docker) — по мосту докера, telemt и WEB — по пользователю процесса. Через каскад идут прямые подключения к DC Telegram (443). Middle proxy (порт 8888) — только напрямую: его рукопожатие привязано к IP и порту сервера, через ноду каскада оно не сходится. Поэтому, пока галки выше стоят, WEB-прокси и telemt работают с DC напрямую — и весь их Telegram-трафик идёт через каскад."/>
                             </StackPanel>
                         </Border>
                         <DockPanel Margin="0,0,0,10">
@@ -291,7 +299,7 @@
                         <Button DockPanel.Dock="Right" Content="Сохранить и применить" Click="RulesSave_Click"/>
                         <Button DockPanel.Dock="Right" Content="Вернуть" Click="RulesReload_Click" Margin="0,0,6,0"/>
                         <TextBlock Style="{StaticResource Dim}" Margin="0,0,12,0"
-                                   Text="rule-providers и rules — формат config.yaml Кинетика (пути /opt/etc/mihomo/… переписываются сами). Конфиг с ошибкой не встанет — работает прежний"/>
+                                   Text="rules и rule-providers — формат config.yaml Кинетика: сами правила наверху, rule-providers в конце (пути /opt/etc/mihomo/… переписываются сами). Конфиг с ошибкой не встанет — работает прежний"/>
                     </DockPanel>
                     <TextBox x:Name="RulesBox" Style="{StaticResource Mono}" IsReadOnly="False" AcceptsReturn="True" AcceptsTab="True"/>
                 </DockPanel>

@@ -317,6 +317,9 @@ public sealed class CascadeRemote
     /// <summary>Сервер на qcascade 2.x — источники, AWG, MTProto, резерв.</summary>
     public static bool IsV2(string? ver) => ver is not null && !Newer("2.0.0", ver);
 
+    /// <summary>qcascade 2.0.2+: WEB-прокси и telemt через каскад (QC_MTP_WEB / QC_MTP_TELEMT).</summary>
+    public static bool HasMtpSink(string? ver) => ver is not null && !Newer("2.0.2", ver);
+
     public Task UploadScriptAsync() => UploadAsync(Script, ScriptBytes(), "700");
 
     /// <summary>Настройки qcascade (QC_XRAY_MODE, QC_AWG_MODE, QC_RESERVE…): строки K=V через stdin.

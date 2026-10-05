@@ -45,7 +45,11 @@ public partial class CascadeWindow
         MtpState.Text = (users.Count + ctrs.Count == 0
                             ? "MTProto-прокси на сервере не найдено — поставишь потом (скрипт MTProto), перехват подхватит сам"
                             : "найдено: " + string.Join(", ", users.Select(u => "пользователь " + u).Concat(ctrs.Select(x => "docker " + x)))) +
-                        (S(env, "mtp") == "on" ? (B(s, "nf") ? " · перехват стоит" : " · перехват НЕ стоит") : " · сейчас выключено");
+                        (S(env, "mtp") == "on" ? (B(s, "nf") ? " · перехват стоит" : " · перехват НЕ стоит") : " · сейчас выключено") +
+                        MtpSinkText(mtp);
+        var sink = CascadeRemote.HasMtpSink(st.Version);
+        MtpWebBox.IsEnabled = MtpTelemtBox.IsEnabled = sink;
+        MtpVerNote.Visibility = sink ? Visibility.Collapsed : Visibility.Visible;
 
         if (!full) return;
         _whoFor = c.Id;
@@ -60,9 +64,23 @@ public partial class CascadeWindow
                 S(env, "awgIfaces").Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal));
             AwgSrcBox.Text = S(env, "awgSrc");
             MtpBox.IsChecked = S(env, "mtp") == "on";
+            MtpWebBox.IsChecked = S(env, "mtpWeb") != "middle";
+            MtpTelemtBox.IsChecked = S(env, "mtpTelemt") != "middle";
             MtpUsersBox.Text = S(env, "mtpUsers") is { Length: > 0 } mu ? mu : "telemt mtproxy";
         }
         finally { _loadingUi = false; }
+    }
+
+    /// <summary>Что сейчас на сервере: сток WEB-прокси и режим telemt (detect qcascade 2.0.2+).</summary>
+    private static string MtpSinkText(JsonNode? mtp)
+    {
+        var t = "";
+        if (mtp?["web"] is JsonObject w && B(w, "present"))
+            t += S(w, "sink") == "telemt" ? "\nWEB-прокси: сток telemt — Telegram через каскад"
+                                          : "\nWEB-прокси: сток MTProxy (middle proxy) — Telegram напрямую";
+        if (mtp?["telemt"] is JsonObject tm && B(tm, "present"))
+            t += B(tm, "middle") ? "\ntelemt: middle proxy — Telegram напрямую" : "\ntelemt: напрямую к DC — Telegram через каскад";
+        return t;
     }
 
     private static List<(string Name, string Addr)> AwgIfaces(JsonObject? d) =>
@@ -157,7 +175,7 @@ public partial class CascadeWindow
 
     private async void WhoNf_Click(object sender, RoutedEventArgs e)
     {
-        if (!SourcesReady(out _, out _)) return;
+        if (!SourcesReady(out _, out var st)) return;
         var am = AwgModeUi();
         var ifs = string.Join(" ", Checked(AwgChecks));
         if (am == "list" && ifs.Length == 0) { XuiDialog.Info(this, "Отметь интерфейсы AWG-панели", "Каскад"); return; }
@@ -166,16 +184,22 @@ public partial class CascadeWindow
         var users = Regex.Replace(MtpUsersBox.Text.Trim(), @"[\s,;]+", " ");
         if (!Regex.IsMatch(users, @"^[A-Za-z0-9._ -]*$")) { XuiDialog.Info(this, "Пользователи — системные имена через пробел", "Каскад"); return; }
         var mtp = MtpBox.IsChecked == true ? "on" : "off";
+        var env = new Dictionary<string, string>
+        {
+            ["QC_AWG_MODE"] = am,
+            ["QC_AWG_IFACES"] = ifs,
+            ["QC_AWG_SRC"] = src,
+            ["QC_MTP"] = mtp,
+            ["QC_MTP_USERS"] = users.Length > 0 ? users : "telemt mtproxy",
+        };
+        if (CascadeRemote.HasMtpSink(st.Version))   // старый qcascade этих ключей не знает — «set» упал бы целиком
+        {
+            env["QC_MTP_WEB"] = MtpWebBox.IsChecked == true ? "direct" : "middle";
+            env["QC_MTP_TELEMT"] = MtpTelemtBox.IsChecked == true ? "direct" : "middle";
+        }
         await Op("AWG-панель и MTProto через каскад", async (c, r) =>
         {
-            await r.SetAsync(new Dictionary<string, string>
-            {
-                ["QC_AWG_MODE"] = am,
-                ["QC_AWG_IFACES"] = ifs,
-                ["QC_AWG_SRC"] = src,
-                ["QC_MTP"] = mtp,
-                ["QC_MTP_USERS"] = users.Length > 0 ? users : "telemt mtproxy",
-            });
+            await r.SetAsync(env);
             await ApplyAsync(c, r);
         });
     }

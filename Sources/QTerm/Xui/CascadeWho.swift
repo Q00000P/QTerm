@@ -61,7 +61,37 @@ extension CascadeModel {
         let found = users.map { "пользователь " + $0 } + ctrs.map { "docker " + $0 }
         return (found.isEmpty ? "MTProto-прокси на сервере не найдено — поставишь потом (скрипт MTProto), перехват подхватит сам"
                               : "найдено: " + found.joined(separator: ", ")) +
-            (J.str(envObj, "mtp") == "on" ? (J.bool(r.status, "nf") ? " · перехват стоит" : " · перехват НЕ стоит") : " · сейчас выключено")
+            (J.str(envObj, "mtp") == "on" ? (J.bool(r.status, "nf") ? " · перехват стоит" : " · перехват НЕ стоит") : " · сейчас выключено") +
+            Self.mtpSinkText(mtp)
+    }
+
+    /// Сервер умеет вести WEB-прокси и telemt через каскад (qcascade 2.0.2+).
+    var mtpSinkSupported: Bool { ready.map { CascadeRemote.hasMtpSink($0.st.version) } ?? false }
+
+    /// Что сейчас на сервере: сток WEB-прокси и режим telemt (detect qcascade 2.0.2+).
+    static func mtpSinkText(_ mtp: JObj?) -> String {
+        var t = ""
+        if let w = mtp?["web"] as? JObj, J.bool(w, "present") {
+            t += J.str(w, "sink") == "telemt" ? "\nWEB-прокси: сток telemt — Telegram через каскад"
+                                              : "\nWEB-прокси: сток MTProxy (middle proxy) — Telegram напрямую"
+        }
+        if let tm = mtp?["telemt"] as? JObj, J.bool(tm, "present") {
+            t += J.bool(tm, "middle") ? "\ntelemt: middle proxy — Telegram напрямую" : "\ntelemt: напрямую к DC — Telegram через каскад"
+        }
+        return t
+    }
+
+    /// Для «Обзора»: идут ли WEB-прокси и telemt через каскад; чего на сервере нет (по detect) — не пишем.
+    static func mtpSubsText(_ env: JObj, _ mtp: JObj?) -> String {
+        if J.str(env, "mtpWeb").isEmpty { return "" }
+        var t = ""
+        if (mtp?["web"] as? JObj).map({ J.bool($0, "present") }) ?? true {
+            t += " · WEB-прокси: " + (J.str(env, "mtpWeb") == "middle" ? "напрямую (middle proxy)" : "через каскад")
+        }
+        if (mtp?["telemt"] as? JObj).map({ J.bool($0, "present") }) ?? true {
+            t += " · telemt: " + (J.str(env, "mtpTelemt") == "middle" ? "напрямую (middle proxy)" : "через каскад")
+        }
+        return t
     }
 
     /// Выбор на экране ← настройки сервера (при смене сервера, после установки и по явному «Обновить»).
@@ -80,6 +110,8 @@ extension CascadeModel {
         mtpOn = J.str(env, "mtp") == "on"
         let mu = J.str(env, "mtpUsers")
         mtpUsers = mu.isEmpty ? "telemt mtproxy" : mu
+        mtpWeb = J.str(env, "mtpWeb") != "middle"
+        mtpTelemt = J.str(env, "mtpTelemt") != "middle"
     }
 
     func refreshWho() async {
@@ -117,9 +149,14 @@ extension CascadeModel {
             XuiDialog.info("Пользователи — системные имена через пробел", title: "Каскад"); return
         }
         let mtp = mtpOn ? "on" : "off"
+        var kv = [("QC_AWG_MODE", am), ("QC_AWG_IFACES", ifs), ("QC_AWG_SRC", src),
+                  ("QC_MTP", mtp), ("QC_MTP_USERS", users.isEmpty ? "telemt mtproxy" : users)]
+        if mtpSinkSupported {   // старый qcascade этих ключей не знает — «set» упал бы целиком
+            kv += [("QC_MTP_WEB", mtpWeb ? "direct" : "middle"), ("QC_MTP_TELEMT", mtpTelemt ? "direct" : "middle")]
+        }
+        let env = kv
         await op("AWG-панель и MTProto через каскад") { c, r in
-            try await r.set([("QC_AWG_MODE", am), ("QC_AWG_IFACES", ifs), ("QC_AWG_SRC", src),
-                             ("QC_MTP", mtp), ("QC_MTP_USERS", users.isEmpty ? "telemt mtproxy" : users)])
+            try await r.set(env)
             try await self.applyCore(c, r)
         }
     }

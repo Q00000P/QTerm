@@ -420,6 +420,35 @@ internal sealed class CascadeXuiSourceDialog
         if (err is null && email.Length == 0) err = _newRb.IsChecked == true ? "введи имя нового клиента" : "выбери клиента";
         if (err is not null) { _status.Text = "✗ " + err; return; }
 
+        // Clash-подписку проверяем ДО правок на панели: иначе клиент уже привязан, а источника нет
+        JsonObject st;
+        SetBusy(true);
+        _status.Text = "проверяю подписку панели…";
+        try
+        {
+            st = await _api.SettingsAsync();
+            if (XuiApi.SubLink(st, _api.Url, "x", clash: true) is null)
+            {
+                // у ноды своя подписка выключена, а клиентам её отдаёт главная (узлы 3x-ui v3) — источник делаем там
+                if (await FindMasterOfAsync(p) is { } mm)
+                {
+                    SetBusy(false);
+                    await MoveToMasterAsync(p, mm.Master, mm.Node, ids, email);
+                    return;
+                }
+                throw new XuiException($"в «{p.Name}» выключена Clash/Mihomo-подписка: Настройки панели → Подписка → Clash — включить " +
+                                       "(или выбери главную панель, если эта нода — её узел: там её инбаунды тоже есть)");
+            }
+        }
+        catch (Exception ex)
+        {
+            _status.Text = "✗ " + ex.Message;
+            SetBusy(false);
+            return;
+        }
+        SetBusy(false);
+        _status.Text = "";
+
         var cl = _clients.FirstOrDefault(c => c.Email == email);
         var own = _edit is not null && _edit.MetaStr("client") == email;
         if (cl is not null && _newRb.IsChecked == true &&
@@ -460,7 +489,6 @@ internal sealed class CascadeXuiSourceDialog
                 _clients = await _api.ClientsAsync();
                 cl = _clients.First(c => c.Email == email);
             }
-            var st = await _api.SettingsAsync();
             var link = XuiApi.SubLink(st, _api.Url, cl.SubId, clash: true)
                        ?? throw new XuiException($"в панели «{p.Name}» выключена Clash/Mihomo-подписка: Настройки панели → Подписка → Clash — включить");
             var src = _edit?.Clone() ?? new CascadeSource();
@@ -485,6 +513,59 @@ internal sealed class CascadeXuiSourceDialog
             _status.Text = "✗ " + ex.Message;
             SetBusy(false);
         }
+    }
+
+    /// <summary>Главная, у которой эта панель — узел (3x-ui v3): по адресу узла, потом по имени.</summary>
+    private async Task<(XuiPanel Master, XNode Node)?> FindMasterOfAsync(XuiPanel p)
+    {
+        PanelUrl u;
+        try { u = PanelUrl.Parse(p.Url); } catch (XuiException) { return null; }
+        // сначала помеченные главными, потом остальные панели 3x-ui: роль в QTerm могли и не выставить
+        foreach (var m in _panels.Where(x => x.Id != p.Id).OrderBy(x => x.IsMaster ? 0 : 1))
+        {
+            try
+            {
+                using var api = XuiApi.For(m);
+                var nodes = await api.NodesAsync();
+                var n = nodes.FirstOrDefault(x => u.SameAs(x.Address, x.Port, x.BasePath))
+                        ?? nodes.FirstOrDefault(x => string.Equals(x.Address, u.Host, StringComparison.OrdinalIgnoreCase))
+                        ?? nodes.FirstOrDefault(x => string.Equals(x.Name.Trim(), p.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (n is not null) return (m, n);
+            }
+            catch (Exception) { /* недоступна или узлов не умеет (не v3) — ищем дальше */ }
+        }
+        return null;
+    }
+
+    /// <summary>Переносит выбор на главную: те же серверы — инбаунды этого узла на главной (по протоколу и порту),
+    /// тот же клиент. Ничего не создаёт — пользователь видит, что отмечено, и жмёт кнопку сам.</summary>
+    private async Task MoveToMasterAsync(XuiPanel node, XuiPanel master, XNode n, List<int> ids, string email)
+    {
+        var picked = _inbounds.Where(i => ids.Contains(i.Id)).Select(i => (i.Protocol, i.Port)).ToList();
+        _busy = true;
+        _panelBox.SelectedItem = master;
+        _busy = false;
+        await LoadPanelAsync();
+        if (Panel?.Id != master.Id) return;
+        var onNode = _inbounds.Where(i => i.MultiUser && i.NodeId == n.Id).ToList();
+        var sel = onNode.Where(i => picked.Contains((i.Protocol, i.Port))).Select(i => i.Id).ToHashSet();
+        if (sel.Count == 0) sel = onNode.Select(i => i.Id).ToHashSet();
+        var exists = _clients.Any(c => c.Email == email);
+        _busy = true;
+        if (exists)
+        {
+            _oldBox.SelectedItem = email;
+            _oldRb.IsChecked = true;
+        }
+        else
+        {
+            _newName.Text = email;
+            _newRb.IsChecked = true;
+        }
+        BuildChecks(sel);
+        _busy = false;
+        _status.Text = $"→ «{node.Name}» — узел главной «{master.Name}», Clash-подписку отдаёт главная. Перенёс сюда: отмечены " +
+                       $"инбаунды {n.Name} ({sel.Count}), клиент {email}{(exists ? "" : " (будет создан)")}. Проверь и жми «{_ok.Content}».";
     }
 }
 

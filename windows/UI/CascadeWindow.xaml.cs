@@ -513,6 +513,18 @@ public partial class CascadeWindow : Window
         _ => x,
     };
 
+    /// <summary>WEB-прокси и telemt (qcascade 2.0.2+): идут ли они через каскад; чего на сервере нет (по detect) — не пишем.</summary>
+    private static string MtpSubsText(JsonNode? env, JsonNode? mtp)
+    {
+        if (S(env, "mtpWeb").Length == 0) return "";
+        var t = "";
+        if (mtp?["web"] is not JsonObject w || B(w, "present"))
+            t += " · WEB-прокси: " + (S(env, "mtpWeb") == "middle" ? "напрямую (middle proxy)" : "через каскад");
+        if (mtp?["telemt"] is not JsonObject tm || B(tm, "present"))
+            t += " · telemt: " + (S(env, "mtpTelemt") == "middle" ? "напрямую (middle proxy)" : "через каскад");
+        return t;
+    }
+
     private void RenderOverview()
     {
         var rows = new List<GroupRow>();
@@ -574,7 +586,7 @@ public partial class CascadeWindow : Window
             "list" => "интерфейсы: " + S(env, "awgIfaces"),
             _ => "никто",
         }) + (am != "off" && S(env, "awgSrc").Length > 0 ? $" · только {S(env, "awgSrc")}" : ""));
-        sb.AppendLine($"MTProto     {(S(env, "mtp") == "on" ? "Telegram — через каскад" : "выключено")}");
+        sb.AppendLine($"MTProto     {(S(env, "mtp") == "on" ? "Telegram — через каскад" + MtpSubsText(env, st.Detect?["mtp"]) : "выключено")}");
         if (am != "off" || S(env, "mtp") == "on")
             sb.AppendLine($"nftables    {(B(s, "nf") ? "правила перехвата стоят" : "НЕ СТОЯТ — «Применить» или «Журнал»")}");
 

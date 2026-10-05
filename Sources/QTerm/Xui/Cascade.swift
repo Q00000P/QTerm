@@ -335,6 +335,9 @@ final class CascadeRemote {
     /// Сервер на qcascade 2.x — источники, AWG, MTProto, резерв.
     static func isV2(_ ver: String?) -> Bool { ver != nil && !newer("2.0.0", ver) }
 
+    /// qcascade 2.0.2+: WEB-прокси и telemt через каскад (QC_MTP_WEB / QC_MTP_TELEMT).
+    static func hasMtpSink(_ ver: String?) -> Bool { ver != nil && !newer("2.0.2", ver) }
+
     func uploadScript() async throws { try await upload(Self.script, Self.scriptData, mode: "700") }
 
     /// Настройки qcascade строками K=V через stdin. До установки — через залитый скрипт.

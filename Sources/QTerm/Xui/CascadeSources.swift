@@ -226,6 +226,10 @@ final class XuiSourceVM: ObservableObject {
     @Published var status = ""
     @Published var busy = false
     private var api: XuiAPI?
+    /// Перенос выбора с ноды на её главную (см. moveToMaster): применяется, когда главная загрузится.
+    private var carry: (masterId: String, nodeId: Int, nodeName: String, fromName: String, picked: Set<String>, email: String)?
+    /// pickOld от программной смены клиента (перенос) не должен перетирать отмеченные инбаунды.
+    private var suppressPick = false
 
     var panel: XuiPanel? { panels.first { $0.id == panelId } }
     var isEdit: Bool { req.edit != nil }
@@ -297,10 +301,53 @@ final class XuiSourceVM: ObservableObject {
                 if req.taken.contains(n) { var i = 2; while req.taken.contains("\(n)-\(i)") { i += 1 }; n = "\(n)-\(i)" }
                 name = n
             }
+            if let c = carry, c.masterId == p.id { applyCarry(c) }
         } catch { status = "✗ " + error.localizedDescription }
+        carry = nil
+    }
+
+    /// Главная, у которой эта панель — узел (3x-ui v3): по адресу узла, потом по имени.
+    private func findMaster(of p: XuiPanel) async -> (master: XuiPanel, node: XNode)? {
+        guard let u = PanelURL.tryParse(p.url) else { return nil }
+        let pn = p.name.trimmingCharacters(in: .whitespaces)
+        // сначала помеченные главными, потом остальные панели 3x-ui: роль в QTerm могли и не выставить
+        for m in panels.filter({ $0.id != p.id }).sorted(by: { $0.isMaster && !$1.isMaster }) {
+            guard let a = try? XuiAPI.forPanel(m), let nodes = try? await a.nodes() else { continue }
+            let n = nodes.first { u.sameAs($0.address, $0.port, $0.basePath) }
+                ?? nodes.first { $0.address.caseInsensitiveCompare(u.host) == .orderedSame }
+                ?? nodes.first { $0.name.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(pn) == .orderedSame }
+            if let n { return (m, n) }
+        }
+        return nil
+    }
+
+    /// Переносит выбор на главную: те же серверы — инбаунды узла на главной (по протоколу и порту), тот же клиент.
+    /// Ничего не создаёт — видно, что отмечено, кнопку жмут сами.
+    private func moveToMaster(from node: XuiPanel, to master: XuiPanel, _ n: XNode, ids: [Int], email: String) {
+        let picked = Set(inbounds.filter { ids.contains($0.id) }.map { "\($0.proto):\($0.port)" })
+        carry = (master.id, n.id, n.name, node.name, picked, email)
+        panelId = master.id          // смена панели перезагрузит её (onChange) — выбор применит load()
+    }
+
+    private func applyCarry(_ c: (masterId: String, nodeId: Int, nodeName: String, fromName: String, picked: Set<String>, email: String)) {
+        let onNode = inbounds.filter { $0.multiUser && $0.nodeId == c.nodeId }
+        var sel = Set(onNode.filter { c.picked.contains("\($0.proto):\($0.port)") }.map(\.id))
+        if sel.isEmpty { sel = Set(onNode.map(\.id)) }
+        let exists = clients.contains { $0.email == c.email }
+        if exists {
+            if oldName != c.email { suppressPick = true; oldName = c.email }
+            newClient = false
+        } else {
+            newName = c.email
+            newClient = true
+        }
+        checked = sel
+        status = "→ «\(c.fromName)» — узел главной «\(panel?.name ?? "")», Clash-подписку отдаёт главная. Перенёс сюда: отмечены инбаунды " +
+            "\(c.nodeName) (\(sel.count)), клиент \(c.email)\(exists ? "" : " (будет создан)"). Проверь и жми «Создать и добавить»."
     }
 
     func pickOld(_ em: String) {
+        if suppressPick { suppressPick = false; return }
         guard !isEdit, let cl = clients.first(where: { $0.email == em }) else { return }
         newClient = false
         checked = Set(cl.inboundIds)
@@ -319,6 +366,26 @@ final class XuiSourceVM: ObservableObject {
         else if ids.isEmpty { err = "отметь хотя бы один инбаунд" }
         else if email.isEmpty { err = newClient ? "введи имя нового клиента" : "выбери клиента" }
         if let err { status = "✗ " + err; return nil }
+
+        // Clash-подписку проверяем ДО правок на панели: иначе клиент уже привязан, а источника нет
+        busy = true
+        status = "проверяю подписку панели…"
+        let st: JObj
+        do { st = try await a.settings() } catch { busy = false; status = "✗ " + error.localizedDescription; return nil }
+        if XuiAPI.subLink(st, a.url, "x", clash: true) == nil {
+            // у ноды своя подписка выключена, а клиентам её отдаёт главная (узлы 3x-ui v3) — источник делаем там
+            if let f = await findMaster(of: p) {
+                busy = false
+                moveToMaster(from: p, to: f.master, f.node, ids: ids, email: email)
+                return nil
+            }
+            busy = false
+            status = "✗ в «\(p.name)» выключена Clash/Mihomo-подписка: Настройки панели → Подписка → Clash — включить " +
+                "(или выбери главную панель, если эта нода — её узел: там её инбаунды тоже есть)"
+            return nil
+        }
+        busy = false
+        status = ""
 
         var cl = clients.first { $0.email == email }
         let own = req.edit?.m("client") == email
@@ -355,7 +422,6 @@ final class XuiSourceVM: ObservableObject {
                 guard let c2 = clients.first(where: { $0.email == email }) else { throw XuiError("клиент \(email) пропал с панели") }
                 c = c2
             }
-            let st = try await a.settings()
             guard let link = XuiAPI.subLink(st, a.url, c.subId, clash: true) else {
                 throw XuiError("в панели «\(p.name)» выключена Clash/Mihomo-подписка: Настройки панели → Подписка → Clash — включить")
             }
