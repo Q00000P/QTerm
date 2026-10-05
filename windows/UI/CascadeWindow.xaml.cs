@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using QTermWin.Models;
 using QTermWin.Vault;
 using QTermWin.Xui;
 
@@ -43,7 +44,8 @@ public partial class CascadeWindow : Window
         public JsonObject? Status;
         public JsonObject? Detect;
         public bool Pending;             // источники/настройки записаны, но конфиг не пересобран
-        public string? Error;
+        public string? Error;            // до сервера не достучались (SSH, нет сессии)
+        public string? SrvError;         // сервер ответил, а qcascade status — нет (сломанный/старый скрипт)
         public DateTime At;
     }
 
@@ -130,7 +132,24 @@ public partial class CascadeWindow : Window
     {
         var keep = pick ?? Sel?.Id;
         _servers = _store.Cascades();
+        DropDuplicates();
         RenderServers(keep);
+    }
+
+    /// <summary>Один сервер дважды (добавлен на двух устройствах, сессию пересоздали и добавили заново):
+    /// оставляем запись с меньшим id — одинаково на всех устройствах, синк не съест обе.</summary>
+    private void DropDuplicates()
+    {
+        var seen = new HashSet<Guid>();
+        foreach (var c in _servers.OrderBy(x => x.Id.ToString(), StringComparer.Ordinal).ToList())
+        {
+            if (SessionOf(c) is not { } s || seen.Add(s.Id)) continue;
+            _store.DeleteCascade(c.Id);
+            _servers.Remove(c);
+            _st.Remove(c.Id);
+            _remotes.Remove(c.Id);
+            Log($"✓ «{c.Name}» был в списке дважды (та же SSH-сессия) — лишняя запись убрана", LogKind.Dim);
+        }
     }
 
     private void RenderServers(Guid? keep = null)
@@ -147,10 +166,15 @@ public partial class CascadeWindow : Window
     private string SubOf(CascadeServer c)
     {
         var st = St(c);
+        if (SessionOf(c) is null) return "нет SSH-сессии — «Выбрать сессию…»";
         if (!st.Checked) return st.Error is { } e ? "✗ " + e : "не опрошен";
         if (st.Error is { } err) return "✗ " + err;
         if (st.Version is null) return "каскад не установлен";
         if (!CascadeRemote.IsV2(st.Version)) return $"qcascade {st.Version} — нужно обновить";
+        if (st.SrvError is not null)
+            return CascadeRemote.Newer(CascadeRemote.ScriptVersion, st.Version)
+                ? $"qcascade {st.Version} не отдаёт статус — обновить до {CascadeRemote.ScriptVersion}"
+                : $"qcascade {st.Version} не отдаёт статус";
         var mh = st.Status?["mihomo"];
         if (!B(mh, "active")) return "mihomo не работает";
         var nodes = L(st.Status?["state"], "nodes").Count;
@@ -160,7 +184,8 @@ public partial class CascadeWindow : Window
     private Brush DotOf(CascadeServer c)
     {
         var st = St(c);
-        if (st.Error is not null) return Red;
+        if (SessionOf(c) is null) return Amber;
+        if (st.Error is not null || st.SrvError is not null) return Red;
         if (!st.Checked || st.Version is null) return Gray;
         if (!CascadeRemote.IsV2(st.Version)) return Amber;
         if (!B(st.Status?["mihomo"], "active")) return Red;
@@ -174,13 +199,41 @@ public partial class CascadeWindow : Window
         await RefreshAsync();
     }
 
-    private Guid? SidOf(CascadeServer c) =>
-        Guid.TryParse(c.Ssh, out var id) && _store.Sessions().Any(s => s.Id == id) ? id : null;
+    /// <summary>SSH-сессия каскад-сервера: по id → по хосту → по имени (хост — и из имени вида «1.2.3.4 NAME»).
+    /// Сессию пересоздали, или на другом устройстве у неё другой id — сервер не теряется.
+    /// Неоднозначно (две сессии на один хост с разными именами) — null: пусть выберут руками.</summary>
+    private Session? SessionOf(CascadeServer c)
+    {
+        var all = _store.Sessions();
+        if (Guid.TryParse(c.Ssh, out var id) && all.FirstOrDefault(s => s.Id == id) is { } byId) return byId;
+        var byName = all.Where(s => SameName(s.Name, c.Name)).ToList();
+        var host = c.Host is { Length: > 0 } h ? h : HostFromName(c.Name);
+        if (host is not null)
+        {
+            var byHost = all.Where(s => string.Equals(s.Host.Trim(), host, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (byHost.Count == 1) return byHost[0];
+            if (byHost.Count > 1) return byHost.Where(byName.Contains).ToList() is { Count: 1 } both ? both[0] : null;
+        }
+        return byName.Count == 1 ? byName[0] : null;
+    }
+
+    private static bool SameName(string a, string b) =>
+        string.Equals(System.Text.RegularExpressions.Regex.Replace(a.Trim(), @"\s+", " "),
+                      System.Text.RegularExpressions.Regex.Replace(b.Trim(), @"\s+", " "), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>«176.109.100.158 LAP» → 176.109.100.158 (так ноды QTerm называются по умолчанию).</summary>
+    private static string? HostFromName(string name)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(name.Trim(), @"^(\d{1,3}(?:\.\d{1,3}){3}|[0-9A-Fa-f:]*:[0-9A-Fa-f:]+)(?:\s|$)");
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    private Guid? SidOf(CascadeServer c) => SessionOf(c)?.Id;
 
     private CascadeRemote Remote(CascadeServer c)
     {
         var exec = ExecInSession ?? throw new XuiException("SSH QTerm недоступен из этого окна");
-        var sid = SidOf(c) ?? throw new XuiException($"у «{c.Name}» нет SSH-сессии в QTerm — убери сервер и добавь заново");
+        var sid = SidOf(c) ?? throw new XuiException($"у «{c.Name}» нет SSH-сессии в QTerm — «Выбрать сессию…»");
         if (!_remotes.TryGetValue(c.Id, out var r))
             _remotes[c.Id] = r = new CascadeRemote((cmd, t) => exec(sid, cmd, t));
         return r;
@@ -220,34 +273,52 @@ public partial class CascadeWindow : Window
         await RefreshAsync(detect: true);
     }
 
+    /// <summary>Опрос сервера. Нет связи (SSH) — прежняя картинка остаётся (обрыв — не повод гасить экран).
+    /// Связь есть, а qcascade status не ответил — статус сбрасывается, карточка показывает ошибку и путь
+    /// (обычно «Обновить до …»): показывать старый статус — значит врать (так v1-статус выдавался за v2).</summary>
     private async Task RefreshAsync(bool quiet = false, bool detect = false)
     {
         if (Sel is not { } c) { RenderAll(); return; }
         if (ExecInSession is null || _refreshing) return;
-        _refreshing = true;
         var st = St(c);
+        if (SessionOf(c) is null) { st.Error = null; RenderServers(); return; }   // карточка «Выбрать сессию…»
+        _refreshing = true;
         if (!quiet) HeadStatus.Text = $"опрашиваю «{c.Name}»…";
         try
         {
             var r = Remote(c);
             var ver = await r.RemoteVersionAsync();
-            st.Version = ver;
             st.Error = null;
-            if (ver is null) { st.Status = null; st.Detect = null; st.Pending = false; }
-            else
-            {
-                st.Status = await r.StatusAsync();
-                if (st.Status["pending"] is JsonValue pv && pv.TryGetValue<bool>(out var p) && p) st.Pending = true;
-                if (CascadeRemote.IsV2(ver) && (detect || st.Detect is null || _seg == "who"))
-                    st.Detect = await r.DetectAsync();
-            }
+            if (st.Version != ver) { st.Status = null; st.Detect = null; }   // другая версия — прежнее не годится
+            st.Version = ver;
             st.Checked = true;
             st.At = DateTime.Now;
+            if (ver is null) { st.Pending = false; st.SrvError = null; }
+            else
+            {
+                try
+                {
+                    st.Status = await r.StatusAsync();
+                    st.SrvError = null;
+                    if (st.Status["pending"] is JsonValue pv && pv.TryGetValue<bool>(out var p) && p) st.Pending = true;
+                }
+                catch (Exception ex)
+                {
+                    if (!quiet || st.SrvError != ex.Message) Log("✗ " + ex.Message, LogKind.Err);
+                    st.SrvError = ex.Message;
+                    st.Status = null;
+                }
+                if (st.Status is not null && CascadeRemote.IsV2(ver) && (detect || st.Detect is null || _seg == "who"))
+                {
+                    try { st.Detect = await r.DetectAsync(); }
+                    catch (Exception ex) { if (!quiet) Log("✗ " + ex.Message, LogKind.Err); }
+                }
+            }
         }
         catch (Exception ex)
         {
+            if (!quiet || st.Error != ex.Message) Log("✗ " + ex.Message, LogKind.Err);
             st.Error = ex.Message;
-            if (!quiet) Log("✗ " + ex.Message, LogKind.Err);
         }
         finally { _refreshing = false; }
         RenderServers();
@@ -332,9 +403,11 @@ public partial class CascadeWindow : Window
         ApplyBtn.Content = st.Pending ? "Применить ●" : "Применить";
         ApplyBtn.SetResourceReference(BackgroundProperty, st.Pending ? "SelBrush" : "Panel2Brush");
         ApplyBtn.IsEnabled = st.Status is not null && CascadeRemote.IsV2(st.Version);
+        if (SessionOf(c) is null) { HeadStatus.Text = "нет SSH-сессии в QTerm"; return; }
         if (!st.Checked) { HeadStatus.Text = st.Error is { } e0 ? "✗ " + e0 : ""; return; }
         if (st.Error is { } e) { HeadStatus.Text = "✗ " + e; return; }
         if (st.Version is null) { HeadStatus.Text = "каскад не установлен"; return; }
+        if (st.SrvError is not null) { HeadStatus.Text = $"qcascade {st.Version} · статус не отдаётся"; return; }
         var mh = st.Status?["mihomo"];
         HeadStatus.Text = $"qcascade {st.Version} · mihomo {S(mh, "version")} " +
                           (B(mh, "active") ? "работает" : "НЕ РАБОТАЕТ") +
@@ -363,7 +436,16 @@ public partial class CascadeWindow : Window
         {
             var st = St(c);
             var mine = CascadeRemote.ScriptVersion;
-            if (!st.Checked && st.Error is { } e)
+            if (SessionOf(c) is null)
+            {
+                title = $"У «{c.Name}» нет SSH-сессии в QTerm";
+                text = "Сессию, к которой был привязан сервер, удалили или пересоздали (или она с другого устройства и ещё " +
+                       "не доехала синком), а по хосту и имени однозначно не нашлась.\n\n«Выбрать сессию…» — привязать сервер " +
+                       "к SSH-сессии заново: на сервере ничего не меняется.";
+                btn = "Выбрать сессию…";
+                _cardAction = "relink";
+            }
+            else if (!st.Checked && st.Error is { } e)
             {
                 title = $"Нет связи с «{c.Name}»";
                 text = e + "\n\nSSH-сессия сервера откроется вкладкой в QTerm (вход, ключи — как обычно).";
@@ -390,6 +472,17 @@ public partial class CascadeWindow : Window
                 btn = $"Обновить до {mine}…";
                 _cardAction = "install";
             }
+            else if (st.Version is not null && st.SrvError is { } se && _seg != "journal")
+            {
+                var older = CascadeRemote.Newer(mine, st.Version);
+                title = $"qcascade {st.Version} на «{c.Name}» не отдаёт статус";
+                text = se + "\n\n" + (older
+                    ? $"В QTerm скрипт новее ({mine}) — в нём это исправлено. «Обновить до {mine}…»: скрипт зальётся заново, " +
+                      "источники нод, правила, группы, резерв и режимы перехвата на сервере сохраняются."
+                    : "Подробности — в «Журнале». «Переустановить…» (вверху) зальёт скрипт заново, настройки сохранятся.");
+                btn = older ? $"Обновить до {mine}…" : "Повторить";
+                _cardAction = older ? "install" : "refresh";
+            }
         }
         if (title is null) { CardView.Visibility = Visibility.Collapsed; return; }
         CardTitle.Text = title;
@@ -404,7 +497,8 @@ public partial class CascadeWindow : Window
         switch (_cardAction)
         {
             case "add": ServerAdd_Click(sender, e); break;
-            case "refresh": await RefreshAsync(); break;
+            case "refresh": await RefreshAsync(detect: true); break;
+            case "relink": await RelinkAsync(); break;
             default: Install_Click(sender, e); break;
         }
     }
@@ -595,17 +689,46 @@ public partial class CascadeWindow : Window
         var idx = items.IndexOf(pick);
         var s = idx >= 0 ? sessions[idx] : sessions.FirstOrDefault(x => string.Equals(x.Name, pick.Trim(), StringComparison.OrdinalIgnoreCase));
         if (s is null) { XuiDialog.Info(this, $"Нет SSH-сессии «{pick}»", "Каскад"); return; }
-        if (_store.Cascades().FirstOrDefault(c => c.Ssh.Equals(s.Id.ToString(), StringComparison.OrdinalIgnoreCase)) is { } dup)
+        if (_store.Cascades().FirstOrDefault(c => SessionOf(c)?.Id == s.Id) is { } dup)
         {
             LoadServers(dup.Id);
             XuiDialog.Info(this, $"«{s.Name}» уже в списке каскадов", "Каскад");
             return;
         }
-        var cs = new CascadeServer { Name = s.Name, Ssh = s.Id.ToString() };
+        var cs = new CascadeServer { Name = s.Name, Ssh = s.Id.ToString(), Host = s.Host.Trim() };
         _store.SaveCascade(cs);
         Log($"✓ каскад-сервер «{cs.Name}» добавлен", LogKind.Ok);
         LoadServers(cs.Id);
         await RefreshAsync();
+    }
+
+    /// <summary>Привязать каскад-сервер к SSH-сессии заново (сессию пересоздали / на этом устройстве её нет).</summary>
+    private async Task RelinkAsync()
+    {
+        if (Sel is not { } c) return;
+        var sessions = _store.Sessions();
+        if (sessions.Count == 0) { XuiDialog.Info(this, "В QTerm нет SSH-сессий — сначала добавь ноду сервера", "Каскад"); return; }
+        var items = sessions.Select(x => $"{x.Name}   ·   {(x.Username.Length > 0 ? x.Username + "@" : "")}{x.Host}").ToList();
+        var guess = sessions.FindIndex(x => SameName(x.Name, c.Name));
+        var pick = XuiDialog.Pick(this, $"SSH-сессия сервера «{c.Name}» (на сервере ничего не меняется):",
+            "Каскад-сервер", items, guess >= 0 ? items[guess] : null, "Привязать");
+        if (pick is null) return;
+        var idx = items.IndexOf(pick);
+        var s = idx >= 0 ? sessions[idx] : sessions.FirstOrDefault(x => SameName(x.Name, pick));
+        if (s is null) { XuiDialog.Info(this, $"Нет SSH-сессии «{pick}»", "Каскад"); return; }
+        if (_store.Cascades().FirstOrDefault(x => x.Id != c.Id && SessionOf(x)?.Id == s.Id) is { } other)
+        {
+            XuiDialog.Info(this, $"К «{s.Name}» уже привязан каскад-сервер «{other.Name}» — этот лишний, убери его", "Каскад");
+            return;
+        }
+        c.Ssh = s.Id.ToString();
+        c.Host = s.Host.Trim();
+        _store.SaveCascade(c);
+        _remotes.Remove(c.Id);
+        _st.Remove(c.Id);
+        Log($"✓ «{c.Name}» → SSH-сессия «{s.Name}»", LogKind.Ok);
+        LoadServers(c.Id);
+        await RefreshAsync(detect: true);
     }
 
     private async void ServerRemove_Click(object sender, RoutedEventArgs e)
@@ -784,7 +907,7 @@ public partial class CascadeWindow : Window
         var api = S(st.Status!["env"], "api");
         if (api.Length == 0) { XuiDialog.Info(this, "Сервер не сообщил адрес API mihomo", "Каскад"); return; }
         var port = api[(api.LastIndexOf(':') + 1)..];
-        var sess = SidOf(c) is { } sid ? _store.Sessions().FirstOrDefault(x => x.Id == sid) : null;
+        var sess = SessionOf(c);
         var target = sess is null ? "root@<сервер>"
             : $"{(sess.Username.Length > 0 ? sess.Username + "@" : "")}{sess.Host}" + (sess.Port is 22 or 0 ? "" : $" -p {sess.Port}");
         string secret;

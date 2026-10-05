@@ -9,7 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>QTerm</AssemblyName>
     <RootNamespace>QTermWin</RootNamespace>
-    <Version>3.13.0</Version>
+    <Version>3.13.1</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- Per-Monitor V2: чёткий UI и верные координаты на мониторах с разным масштабом -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -59,6 +59,7 @@
     <Compile Include="Editor\Shared\EditorProtocol.cs" Link="Shared\EditorProtocol.cs" />
     <Compile Include="Editor\Shared\ThemeManager.cs" Link="Shared\ThemeManager.cs" />
     <Compile Include="Editor\Shared\WindowFit.cs" Link="Shared\WindowFit.cs" />
+    <Compile Include="Editor\Shared\EditorProcess.cs" Link="Shared\EditorProcess.cs" />
   </ItemGroup>
 
   <!-- dotnet run (Debug): заодно собрать QEditor, чтобы QTerm его нашёл.

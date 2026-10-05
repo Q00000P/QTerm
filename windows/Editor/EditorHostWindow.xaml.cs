@@ -303,6 +303,7 @@ public partial class EditorHostWindow : Window
             EditorSettings.Current.Height = ActualHeight;
         }
         EditorSettings.Save();
+        App.BeginExit();   // окно закрывается насовсем — процесс без окна жить не должен (держал бы канал)
     }
 
     // ══════════════════════ Меню ══════════════════════

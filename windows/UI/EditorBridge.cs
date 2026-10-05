@@ -52,6 +52,8 @@ public sealed class EditorBridge
         await _gate.WaitAsync();
         try
         {
+            // QEditor без окна (упал при закрытии, но жив и держит канал) молча съел бы файл — убрать, канал к нему бросить
+            if (await Task.Run(() => EditorProcess.KillZombies("QTerm перед открытием в QEditor")) > 0) Drop();
             for (int attempt = 0; attempt < 2; attempt++)
             {
                 if (!await EnsureConnectedAsync())

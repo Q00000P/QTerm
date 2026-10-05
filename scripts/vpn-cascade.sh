@@ -22,7 +22,7 @@
 # QC_SOURCES_FILE (JSON источников для install; файл удаляется).
 
 set -Eeuo pipefail
-VERSION="2.0.0"
+VERSION="2.0.1"
 
 QC_ROOT=${QC_ROOT:-}            # только для тестов: префикс всех путей
 QC_ETC=$QC_ROOT/etc/qcascade
@@ -46,6 +46,7 @@ ENV_KEYS="QC_SECRET QC_PORT QC_API QC_TPROXY_PORT QC_DIRECT_TARGET QC_XRAY_MODE 
 
 # сетевой перехват: метка пакетов, таблица маршрутов, приоритет правила (менять — только вместе: nf down → nf up)
 NF_MARK=0x2a0
+ME_PORT=8888                  # порт middle proxy Telegram — его перехват ломает рукопожатие (см. nf_rules)
 NF_TABLE=672
 NF_PREF=9000
 NF_NAME=qcascade
@@ -114,7 +115,7 @@ save_env() {
   chmod 600 "$tmp"; mv -f "$tmp" "$ENV_FILE"
 }
 defaults() {
-  : "${QC_PORT:=7893}" "${QC_API:=127.0.0.1:9090}" "${QC_TPROXY_PORT:=7895}" "${QC_DIRECT_TARGET:=DIRECT}" \
+  : "${QC_PORT:=7893}" "${QC_API:=127.0.0.1:19090}" "${QC_TPROXY_PORT:=7895}" "${QC_DIRECT_TARGET:=DIRECT}" \
     "${QC_XRAY_MODE:=all}" "${QC_XRAY_LIST:=}" "${QC_AWG_MODE:=off}" "${QC_AWG_IFACES:=}" "${QC_AWG_SRC:=}" \
     "${QC_MTP:=off}" "${QC_MTP_USERS:=telemt mtproxy}" "${QC_RESERVE:=}" \
     "${QC_MIHOMO_URL:=}" "${QC_MIHOMO_REPO:=}" "${QC_SUB_URL:=}"
@@ -1052,6 +1053,15 @@ mh_ready() {
          -H "Authorization: Bearer $QC_SECRET" "http://127.0.0.1:${QC_API##*:}/version" 2>/dev/null) || true
   [ "$code" = 200 ]   # 502 — это mihomo сам: туннель ещё не принимает
 }
+port_conflicts() { # чужой процесс на наших портах — частая причина «mihomo не поднялся»
+  local p who
+  for p in "${QC_API##*:}" "$QC_PORT" "$QC_TPROXY_PORT"; do
+    who=$(ss -Hltnp "( sport = :$p )" 2>/dev/null | grep -v '"mihomo"' | grep -o 'users:(([^)]*' | head -1) || true
+    [ -n "$who" ] && warn "порт $p занят чужим процессом (${who#users:((}) — смени: qcascade set QC_API=127.0.0.1:<порт> (или QC_PORT / QC_TPROXY_PORT), затем qcascade apply"
+  done
+  return 0
+}
+
 mh_healthy() { # ждём API и туннель до N сек
   local n=${1:-60} i
   for ((i=0; i<n; i++)); do
@@ -1105,6 +1115,7 @@ cmd_apply() {
     ok "mihomo применил конфиг ($(jq '.nodes|length' "$STATE") нод из $(jq '[.sources[]|select(.enabled and .nodes>0)]|length' "$STATE") источников)"
   else
     err "mihomo не поднялся с новым конфигом — откатываю"
+    port_conflicts
     install -m 600 "$CFG" "$CFG.bad"
     if [ -f "$CFG.prev" ]; then install -m 640 -o root -g qcascade "$CFG.prev" "$CFG"; systemctl restart "$SVC"; mh_healthy 60 || err "и прежний не поднялся: journalctl -u $SVC"; fi
     journalctl -u "$SVC" -n 15 --no-pager 2>/dev/null | sed 's/^/       /' >&2 || true
@@ -1181,19 +1192,23 @@ nf_rules() { # nf_rules [no6] — таблица nft под текущие на�
   local out=""
   if [ "$QC_MTP" = on ]; then
     tg=$(tg_cidrs)
-    body+="    iifname \"docker0\" ip daddr @tg4 meta l4proto tcp meta mark set $m tproxy ip to 127.0.0.1:$tp accept"$'\n'
-    body+="    iifname \"br-*\" ip daddr @tg4 meta l4proto tcp meta mark set $m tproxy ip to 127.0.0.1:$tp accept"$'\n'
+    # 8888 — middle proxy Telegram (официальный MTProxy, сток WEB-прокси, telemt с use_middle_proxy): его рукопожатие
+    # завязано на IP и порт сервера, через ноду каскада оно не сходится — такие соединения идут напрямую.
+    # Прямые подключения к DC (mtg, teleproxy DIRECT_MODE, telemt без middle proxy) — через каскад.
+    body+="    iifname \"docker0\" ip daddr @tg4 meta l4proto tcp tcp dport != $ME_PORT meta mark set $m tproxy ip to 127.0.0.1:$tp accept"$'\n'
+    body+="    iifname \"br-*\" ip daddr @tg4 meta l4proto tcp tcp dport != $ME_PORT meta mark set $m tproxy ip to 127.0.0.1:$tp accept"$'\n'
     uids=$(mtp_uids)
     if [ -n "$uids" ]; then
-      # IPv6 у MTProto-процессов — отказ (перехват только IPv4): уходят на IPv4 → в каскад
+      # IPv6 у MTProto-процессов — отказ только НОВЫМ исходящим (перехват только IPv4): уходят на IPv4 → в каскад.
+      # Ответы клиентам, пришедшим по IPv6 (telemt слушает и ::), не трогаем — иначе им был бы сброс.
       out="  chain out {
     type route hook output priority mangle; policy accept;
-    meta skuid { $uids } ip daddr @tg4 meta l4proto tcp meta mark set $m
+    meta skuid { $uids } ct direction original ip daddr @tg4 meta l4proto tcp tcp dport != $ME_PORT meta mark set $m
   }"
       [ $v6 = 1 ] && out+="
   chain v6out {
     type filter hook output priority filter; policy accept;
-    meta skuid { $uids } ip6 daddr != { ::1, fc00::/7, fe80::/10 } meta l4proto tcp reject with tcp reset
+    meta skuid { $uids } ct state new ip6 daddr != { ::1, fc00::/7, fe80::/10 } meta l4proto tcp tcp dport != $ME_PORT reject with tcp reset
   }"
     fi
   fi
@@ -1590,6 +1605,12 @@ cmd_install() {
   fi
   wizard
   migrate_sources
+  # до 2.0.1 API mihomo по умолчанию — 127.0.0.1:9090, а его же берут метрики telemt, Prometheus, Cockpit:
+  # кто стартовал вторым — тот без порта (mihomo без API = «не поднялся»). Переезжаем заранее.
+  if [ "$QC_API" = 127.0.0.1:9090 ]; then
+    QC_API=127.0.0.1:$(pick_port 19090)
+    ok "API mihomo → $QC_API (9090 занимают метрики telemt/Prometheus)"
+  fi
   if ! systemctl is-active -q "$SVC"; then
     port_busy "$QC_PORT" && QC_PORT=$(pick_port "$QC_PORT")
     port_busy "$QC_TPROXY_PORT" && QC_TPROXY_PORT=$(pick_port "$QC_TPROXY_PORT")
@@ -1688,12 +1709,12 @@ cmd_status() {
           --slurpfile st <( [ -f "$STATE" ] && cat "$STATE" || echo '{}' ) --arg v "$VERSION" \
           --argjson installed "$installed" --arg dt "$QC_DIRECT_TARGET" --arg xm "$QC_XRAY_MODE" --arg xl "$QC_XRAY_LIST" \
           --arg mu "$QC_MIHOMO_URL" --arg api "$QC_API" --argjson port "${QC_PORT:-0}" --argjson sub "$subset" \
-          --arg am "$QC_AWG_MODE" --arg ai "$QC_AWG_IFACES" --arg as "$QC_AWG_SRC" --arg mtp "$QC_MTP" \
+          --arg am "$QC_AWG_MODE" --arg ai "$QC_AWG_IFACES" --arg asrc "$QC_AWG_SRC" --arg mtp "$QC_MTP" \
           --arg res "$QC_RESERVE" --argjson nf "$nfa" --argjson srcs "$srcs" --arg mtpu "$QC_MTP_USERS" --argjson pend "$pend" \
       '{qcascade:$v, installed:$installed, mihomo:{active:$active, version:$ver}, xray:$xray, groups:$groups,
         state:($st[0] // {}), sources:$srcs, nf:$nf, pending:$pend,
         env:{directTarget:$dt, xrayMode:$xm, xrayList:$xl, mihomoUrl:$mu, api:$api, port:$port, subSet:$sub,
-             awgMode:$am, awgIfaces:$ai, awgSrc:$as, mtp:$mtp, mtpUsers:$mtpu, reserve:$res}}'
+             awgMode:$am, awgIfaces:$ai, awgSrc:$asrc, mtp:$mtp, mtpUsers:$mtpu, reserve:$res}}'
     return 0
   fi
   printf '%sqcascade %s%s\n' "$C_B" "$VERSION" "$C_0"

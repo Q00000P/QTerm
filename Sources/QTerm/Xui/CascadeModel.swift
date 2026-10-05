@@ -32,12 +32,13 @@ struct CascSrvState {
     var status: JObj?
     var detect: JObj?
     var pending = false
-    var error: String?
+    var error: String?        // до сервера не достучались (SSH)
+    var srvError: String?     // сервер ответил, а qcascade status — нет (сломанный/старый скрипт)
     var at = Date()
 }
 
 struct CascCard {
-    enum Action { case add, refresh, install }
+    enum Action { case add, refresh, install, relink }
     let title: String
     let text: String
     let button: String
@@ -167,10 +168,28 @@ final class CascadeModel: ObservableObject {
 
     func load(pick: String? = nil) {
         let keep = pick ?? sel?.id
+        sessionsAt = .distantPast
         loading = true
-        servers = store.cascades()
+        servers = dropDuplicates(store.cascades())
         selId = servers.first(where: { $0.id == keep })?.id ?? servers.first?.id ?? ""
         loading = false
+    }
+
+    /// Один сервер дважды (добавлен на двух устройствах, сессию пересоздали и добавили заново):
+    /// оставляем запись с меньшим id — одинаково на всех устройствах, синк не съест обе.
+    private func dropDuplicates(_ list: [CascadeServer]) -> [CascadeServer] {
+        var seen = Set<UUID>()
+        var drop = Set<String>()
+        for c in list.sorted(by: { $0.id.lowercased() < $1.id.lowercased() }) {
+            guard let s = session(c) else { continue }
+            if seen.insert(s.id).inserted { continue }
+            store.deleteCascade(c.id)
+            drop.insert(c.id)
+            states[c.id] = nil
+            remotes[c.id] = nil
+            log("✓ «\(c.name)» был в списке дважды (та же SSH-сессия) — лишняя запись убрана", .dim)
+        }
+        return list.filter { !drop.contains($0.id) }
     }
 
     private func selChanged() {
@@ -188,14 +207,52 @@ final class CascadeModel: ObservableObject {
         }
     }
 
-    private func sid(_ c: CascadeServer) -> UUID? {
-        guard let id = c.sessionID, store.sessions().contains(where: { $0.id == id }) else { return nil }
-        return id
+    /// SSH-сессия каскад-сервера: по id → по хосту → по имени (хост — и из имени вида «1.2.3.4 NAME»).
+    /// Сессию пересоздали, или на другом устройстве у неё другой id — сервер не теряется.
+    /// Неоднозначно (две сессии на один хост с разными именами) — nil: пусть выберут руками.
+    func session(_ c: CascadeServer) -> Session? {
+        let all = allSessions()
+        if let id = c.sessionID, let s = all.first(where: { $0.id == id }) { return s }
+        let byName = all.filter { Self.sameName($0.name, c.name) }
+        if let host = (c.host?.isEmpty == false ? c.host : nil) ?? Self.hostFromName(c.name) {
+            let byHost = all.filter { $0.host.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(host) == .orderedSame }
+            if byHost.count == 1 { return byHost[0] }
+            if byHost.count > 1 {
+                let both = byHost.filter { h in byName.contains { $0.id == h.id } }
+                return both.count == 1 ? both[0] : nil
+            }
+        }
+        return byName.count == 1 ? byName[0] : nil
     }
+
+    /// Сессии вейлта — с кэшем на 5 с: session(c) зовут подписи списка и карточка на каждой отрисовке,
+    /// а store.sessions() каждый раз читает вейлт с диска.
+    private var sessionsCache: [Session] = []
+    private var sessionsAt = Date.distantPast
+    private func allSessions() -> [Session] {
+        if Date().timeIntervalSince(sessionsAt) > 5 { sessionsCache = store.sessions(); sessionsAt = Date() }
+        return sessionsCache
+    }
+
+    static func sameName(_ a: String, _ b: String) -> Bool {
+        func norm(_ s: String) -> String {
+            s.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).lowercased()
+        }
+        return norm(a) == norm(b)
+    }
+
+    /// «176.109.100.158 LAP» → 176.109.100.158 (так ноды QTerm называются по умолчанию).
+    static func hostFromName(_ name: String) -> String? {
+        let t = name.trimmingCharacters(in: .whitespaces)
+        guard let r = t.range(of: #"^(\d{1,3}(\.\d{1,3}){3}|[0-9A-Fa-f:]*:[0-9A-Fa-f:]+)(?=\s|$)"#, options: .regularExpression) else { return nil }
+        return String(t[r])
+    }
+
+    private func sid(_ c: CascadeServer) -> UUID? { session(c)?.id }
 
     func remote(_ c: CascadeServer) throws -> CascadeRemote {
         guard let exec = execInSession else { throw XuiError("SSH QTerm недоступен из этого окна") }
-        guard let sid = sid(c) else { throw XuiError("у «\(c.name)» нет SSH-сессии в QTerm — убери сервер и добавь заново") }
+        guard let sid = sid(c) else { throw XuiError("у «\(c.name)» нет SSH-сессии в QTerm — «Выбрать сессию…»") }
         if let r = remotes[c.id] { return r }
         let r = CascadeRemote { cmd, t in try await exec(sid, cmd, t) }
         remotes[c.id] = r
@@ -227,33 +284,53 @@ final class CascadeModel: ObservableObject {
         await refresh(quiet: true)
     }
 
+    /// Опрос сервера. Нет связи (SSH) — прежняя картинка остаётся (обрыв — не повод гасить экран).
+    /// Связь есть, а qcascade status не ответил — статус сбрасывается, карточка показывает ошибку и путь
+    /// (обычно «Обновить до …»). Версию храним всегда, когда она известна: иначе кнопка звала бы «Установить…».
     func refresh(quiet: Bool = false, detect: Bool = false) async {
         guard let c = sel, execInSession != nil, !refreshing else { return }
+        guard session(c) != nil else { edit(c) { $0.error = nil }; return }    // карточка «Выбрать сессию…»
         refreshing = true
         defer { refreshing = false }
-        if !quiet { edit(c) { $0.error = nil } }
+        let ver: String?
+        let r: CascadeRemote
         do {
-            let r = try remote(c)
-            let ver = try await r.remoteVersion()
-            var status: JObj?
-            var det = st(c).detect
-            if ver != nil {
-                status = try await r.status()
-                if CascadeRemote.isV2(ver) && (detect || det == nil || seg == .who) { det = try await r.detect() }
-            }
-            edit(c) { s in
-                s.version = ver
-                s.status = status
-                s.detect = ver == nil ? nil : det
-                if ver == nil { s.pending = false }
-                if let p = status?["pending"] as? Bool, p { s.pending = true }
-                s.error = nil
-                s.checked = true
-                s.at = Date()
-            }
+            r = try remote(c)
+            ver = try await r.remoteVersion()
         } catch {
-            edit(c) { $0.error = error.localizedDescription }
-            if !quiet { log("✗ " + error.localizedDescription, .err) }
+            let msg = error.localizedDescription
+            if !quiet || st(c).error != msg { log("✗ " + msg, .err) }
+            edit(c) { $0.error = msg }
+            syncWho(full: whoFor != c.id)
+            return
+        }
+        edit(c) { s in
+            if s.version != ver { s.status = nil; s.detect = nil }    // другая версия — прежнее не годится
+            s.version = ver
+            s.error = nil
+            s.checked = true
+            s.at = Date()
+            if ver == nil { s.pending = false; s.srvError = nil }
+        }
+        if ver != nil {
+            do {
+                let status = try await r.status()
+                edit(c) { s in
+                    s.status = status
+                    s.srvError = nil
+                    if let p = status["pending"] as? Bool, p { s.pending = true }
+                }
+            } catch {
+                let msg = error.localizedDescription
+                if !quiet || st(c).srvError != msg { log("✗ " + msg, .err) }
+                edit(c) { $0.srvError = msg; $0.status = nil }
+            }
+            if st(c).status != nil, CascadeRemote.isV2(ver), detect || st(c).detect == nil || seg == .who {
+                do {
+                    let det = try await r.detect()
+                    edit(c) { $0.detect = det }
+                } catch { if !quiet { log("✗ " + error.localizedDescription, .err) } }
+            }
         }
         syncWho(full: whoFor != c.id)
     }
@@ -270,10 +347,15 @@ final class CascadeModel: ObservableObject {
 
     func subtitle(_ c: CascadeServer) -> String {
         let s = st(c)
+        if session(c) == nil { return "нет SSH-сессии — «Выбрать сессию…»" }
         if let e = s.error { return "✗ " + e }
         if !s.checked { return "не опрошен" }
         guard let v = s.version else { return "каскад не установлен" }
         if !CascadeRemote.isV2(v) { return "qcascade \(v) — нужно обновить" }
+        if s.srvError != nil {
+            let mine = CascadeRemote.scriptVersion
+            return "qcascade \(v) не отдаёт статус" + (CascadeRemote.newer(mine, v) ? " — обновить до \(mine)" : "")
+        }
         let mh = s.status?["mihomo"] as? JObj ?? [:]
         if !J.bool(mh, "active") { return "mihomo не работает" }
         return "работает · нод \(Self.list(s.status?["state"], "nodes").count)" + (s.pending ? " · не применено" : "")
@@ -281,7 +363,8 @@ final class CascadeModel: ObservableObject {
 
     func dot(_ c: CascadeServer) -> Color {
         let s = st(c)
-        if s.error != nil { return .red }
+        if session(c) == nil { return .orange }
+        if s.error != nil || s.srvError != nil { return .red }
         guard s.checked, let v = s.version else { return .secondary }
         if !CascadeRemote.isV2(v) { return .orange }
         if !J.bool(s.status?["mihomo"] as? JObj ?? [:], "active") { return .red }
@@ -291,9 +374,11 @@ final class CascadeModel: ObservableObject {
     var headStatus: String {
         guard let c = sel else { return "" }
         let s = st(c)
+        if session(c) == nil { return "нет SSH-сессии в QTerm" }
         if let e = s.error { return "✗ " + e }
         if !s.checked { return "опрашиваю…" }
         guard let v = s.version else { return "каскад не установлен" }
+        if s.srvError != nil { return "qcascade \(v) · статус не отдаётся" }
         let mh = s.status?["mihomo"] as? JObj ?? [:]
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
         return "qcascade \(v) · mihomo \(J.str(mh, "version")) " + (J.bool(mh, "active") ? "работает" : "НЕ РАБОТАЕТ") +
@@ -322,6 +407,14 @@ final class CascadeModel: ObservableObject {
         }
         let s = st(c)
         let mine = CascadeRemote.scriptVersion
+        if session(c) == nil {
+            return CascCard(
+                title: "У «\(c.name)» нет SSH-сессии в QTerm",
+                text: "Сессию, к которой был привязан сервер, удалили или пересоздали (или она с другого устройства и ещё не доехала " +
+                    "синком), а по хосту и имени однозначно не нашлась.\n\n«Выбрать сессию…» — привязать сервер к SSH-сессии заново: " +
+                    "на сервере ничего не меняется.",
+                button: "Выбрать сессию…", action: .relink)
+        }
         if !s.checked, let e = s.error {
             return CascCard(title: "Нет связи с «\(c.name)»",
                             text: e + "\n\nSSH-сессия сервера откроется вкладкой в QTerm (вход, ключи — как обычно).",
@@ -345,14 +438,25 @@ final class CascadeModel: ObservableObject {
                     "После обновления — свои источники нод, WireGuard и резерв, перехват AWG-панели и MTProto.",
                 button: "Обновить до \(mine)…", action: .install)
         }
+        if let v = s.version, let se = s.srvError, seg != .journal {
+            let older = CascadeRemote.newer(mine, v)
+            return CascCard(
+                title: "qcascade \(v) на «\(c.name)» не отдаёт статус",
+                text: se + "\n\n" + (older
+                    ? "В QTerm скрипт новее (\(mine)) — в нём это исправлено. «Обновить до \(mine)…»: скрипт зальётся заново, " +
+                      "источники нод, правила, группы, резерв и режимы перехвата на сервере сохраняются."
+                    : "Подробности — в «Журнале». «Переустановить…» (вверху) зальёт скрипт заново, настройки сохранятся."),
+                button: older ? "Обновить до \(mine)…" : "Повторить", action: older ? .install : .refresh)
+        }
         return nil
     }
 
     func cardAction(_ a: CascCard.Action) async {
         switch a {
         case .add: await addServer()
-        case .refresh: await refresh()
+        case .refresh: await refresh(detect: true)
         case .install: await installTap()
+        case .relink: await relink()
         }
     }
 
@@ -503,7 +607,7 @@ final class CascadeModel: ObservableObject {
         let s: Session? = items.firstIndex(of: pick).map { sessions[$0] }
             ?? sessions.first(where: { $0.name.caseInsensitiveCompare(typed) == .orderedSame })
         guard let s else { XuiDialog.info("Нет SSH-сессии «\(pick)»", title: "Каскад"); return }
-        if let dup = store.cascades().first(where: { UUID(uuidString: $0.ssh) == s.id }) {
+        if let dup = store.cascades().first(where: { session($0)?.id == s.id }) {
             load(pick: dup.id)
             XuiDialog.info("«\(s.name)» уже в списке каскадов", title: "Каскад")
             return
@@ -511,10 +615,38 @@ final class CascadeModel: ObservableObject {
         var c = CascadeServer()
         c.name = s.name
         c.ssh = s.id.uuidString.lowercased()
+        c.host = s.host.trimmingCharacters(in: .whitespaces)
         store.saveCascade(c)
         log("✓ каскад-сервер «\(c.name)» добавлен", .ok)
         load(pick: c.id)
         await refresh()
+    }
+
+    /// Привязать каскад-сервер к SSH-сессии заново (сессию пересоздали / на этом устройстве её нет).
+    func relink() async {
+        guard var c = sel else { return }
+        let sessions = store.sessions()
+        if sessions.isEmpty { XuiDialog.info("В QTerm нет SSH-сессий — сначала добавь ноду сервера", title: "Каскад"); return }
+        let items = sessions.map { "\($0.name)   ·   \($0.username.isEmpty ? "" : $0.username + "@")\($0.host)" }
+        let guess = sessions.firstIndex(where: { Self.sameName($0.name, c.name) }).map { items[$0] }
+        guard let pick = await askPick(PickRequest(
+            title: "Каскад-сервер",
+            text: "SSH-сессия сервера «\(c.name)» (на сервере ничего не меняется):",
+            items: items, selected: guess, ok: "Привязать", field: "Сессия")) else { return }
+        let s: Session? = items.firstIndex(of: pick).map { sessions[$0] } ?? sessions.first(where: { Self.sameName($0.name, pick) })
+        guard let s else { XuiDialog.info("Нет SSH-сессии «\(pick)»", title: "Каскад"); return }
+        if let other = store.cascades().first(where: { $0.id != c.id && session($0)?.id == s.id }) {
+            XuiDialog.info("К «\(s.name)» уже привязан каскад-сервер «\(other.name)» — этот лишний, убери его", title: "Каскад")
+            return
+        }
+        c.ssh = s.id.uuidString.lowercased()
+        c.host = s.host.trimmingCharacters(in: .whitespaces)
+        store.saveCascade(c)
+        remotes[c.id] = nil
+        states[c.id] = nil
+        log("✓ «\(c.name)» → SSH-сессия «\(s.name)»", .ok)
+        load(pick: c.id)
+        await refresh(detect: true)
     }
 
     func removeServer() async {
@@ -727,7 +859,7 @@ final class CascadeModel: ObservableObject {
         let api = J.str(r0.status["env"] as? JObj ?? [:], "api")
         guard let colon = api.lastIndex(of: ":") else { XuiDialog.info("Сервер не сообщил адрес API mihomo", title: "Каскад"); return }
         let port = String(api[api.index(after: colon)...])
-        let sess = sid(r0.c).flatMap { id in store.sessions().first { $0.id == id } }
+        let sess = session(r0.c)
         let target = sess.map { s in "\(s.username.isEmpty ? "" : s.username + "@")\(s.host)" + (s.port == 22 || s.port == 0 ? "" : " -p \(s.port)") } ?? "root@<сервер>"
         var secret = ""
         do {

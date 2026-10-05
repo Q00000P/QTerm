@@ -260,7 +260,7 @@
                                              ToolTip="Системные пользователи MTProto-процессов вне докера: telemt, mtproxy (WEB). mtg и teleproxy в докере ловятся сами"/>
                                 </DockPanel>
                                 <TextBlock Style="{StaticResource Dim}" Margin="0,6,0,0"
-                                           Text="mtg и teleproxy (docker) — по мосту докера, telemt и WEB (mtproto-proxy) — по пользователю процесса. Перехватываются только подключения к подсетям Telegram."/>
+                                           Text="mtg и teleproxy (docker) — по мосту докера, telemt и WEB (mtproto-proxy) — по пользователю процесса. Через каскад идут прямые подключения к DC Telegram (mtg, teleproxy, telemt с use_middle_proxy = false). Middle proxy (порт 8888: сток WEB-прокси, telemt по умолчанию) — напрямую: его рукопожатие привязано к IP сервера, через ноду каскада оно не сходится."/>
                             </StackPanel>
                         </Border>
                         <DockPanel Margin="0,0,0,10">

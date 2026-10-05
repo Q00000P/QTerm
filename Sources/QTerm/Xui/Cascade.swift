@@ -12,12 +12,14 @@ struct CascadeServer: Codable, Identifiable, Hashable {
     var name = ""
     /// id SSH-сессии QTerm этого сервера.
     var ssh = ""
+    /// Хост SSH-сессии — найти сервер, если сессию пересоздали или на другом устройстве у неё другой id.
+    var host: String?
     /// v1: клиент главной, чья подписка стояла на сервере (только для показа).
     var client: String?
     var updatedAt: String?
     var deleted: Bool?
 
-    enum CodingKeys: String, CodingKey { case id, name, ssh, client, updatedAt, deleted }
+    enum CodingKeys: String, CodingKey { case id, name, ssh, host, client, updatedAt, deleted }
 
     init() {}
 
@@ -26,6 +28,7 @@ struct CascadeServer: Codable, Identifiable, Hashable {
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString.lowercased()
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         ssh = try c.decodeIfPresent(String.self, forKey: .ssh) ?? ""
+        host = try c.decodeIfPresent(String.self, forKey: .host)
         client = try c.decodeIfPresent(String.self, forKey: .client)
         updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
         deleted = try c.decodeIfPresent(Bool.self, forKey: .deleted)
@@ -175,27 +178,74 @@ final class CascadeRemote {
     }
 
     /// Версия qcascade на сервере; nil — не установлен.
+    /// Версия qcascade на сервере; nil — не установлен. Сбой связи или команды — ошибка, а не «не установлен»
+    /// (иначе QTerm предложил бы чистую установку поверх рабочей).
     func remoteVersion() async throws -> String? {
-        let r = try await run("[ -x \(Self.bin) ] && \(Self.bin) version", 30)
-        guard r.ok, let m = r.out.range(of: #"qcascade\s+\S+"#, options: .regularExpression) else { return nil }
-        return r.out[m].split(separator: " ", omittingEmptySubsequences: true).last.map(String.init)
+        let r = try await run("if [ -x \(Self.bin) ]; then \(Self.bin) version; else echo @@NOQC; fi", 30)
+        if r.out.contains("@@NOQC") { return nil }
+        if let m = r.out.range(of: #"qcascade\s+\d+(\.\d+)+\S*"#, options: .regularExpression) {
+            return r.out[m].split(separator: " ", omittingEmptySubsequences: true).last.map(String.init)
+        }
+        throw XuiError("не узнать версию qcascade на сервере: " + Self.why(r))
     }
 
+    /// JSON-объект из вывода команды. stderr идёт туда же (run): предупреждения до объекта и строки после него
+    /// не мешают — объект скрипта всегда начинается с новой строки.
     private static func obj(_ s: String) -> JObj? {
-        guard let i = s.firstIndex(of: "{") else { return nil }
-        return J.parse(Data(s[i...].utf8)) as? JObj
+        let b = Array(s.utf8)
+        var i = 0
+        while i < b.count {
+            if b[i] == 0x7B, i == 0 || b[i - 1] == 0x0A, let end = objectEnd(b, i),
+               let o = J.parse(Data(b[i...end])) as? JObj { return o }
+            i += 1
+        }
+        return nil
+    }
+
+    /// Конец JSON-объекта с позиции start: скобки с учётом строк и экранирования.
+    private static func objectEnd(_ b: [UInt8], _ start: Int) -> Int? {
+        var depth = 0, inStr = false, esc = false
+        var i = start
+        while i < b.count {
+            let c = b[i]
+            if inStr {
+                if esc {
+                    esc = false
+                } else if c == 0x5C {          // \
+                    esc = true
+                } else if c == 0x22 {          // "
+                    inStr = false
+                }
+            } else if c == 0x22 {
+                inStr = true
+            } else if c == 0x7B || c == 0x5B { // { [
+                depth += 1
+            } else if c == 0x7D || c == 0x5D { // } ]
+                depth -= 1
+                if depth == 0 { return i }
+            }
+            i += 1
+        }
+        return nil
+    }
+
+    /// Почему команда не дала ответа: хвост её вывода (там ошибка) или код возврата.
+    static func why(_ r: Result) -> String {
+        let lines = clean(r.out).replacingOccurrences(of: "\r", with: "").components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return lines.isEmpty ? "пустой ответ (код \(r.rc))" : short(lines.suffix(8).joined(separator: "\n"))
     }
 
     func status() async throws -> JObj {
-        let r = try await qc("status --json 2>/dev/null", 60)
-        guard let o = Self.obj(r.out) else { throw XuiError("qcascade status не вернул JSON: " + Self.short(r.out)) }
+        let r = try await qc("status --json", 90)
+        guard let o = Self.obj(r.out) else { throw XuiError("qcascade status не отдал JSON: " + Self.why(r)) }
         return o
     }
 
     /// Что есть на сервере: 3x-ui (инбаунды, клиенты), интерфейсы AWG, MTProto (пользователи, контейнеры).
     func detect() async throws -> JObj {
-        let r = try await qc("detect 2>/dev/null", 60)
-        guard let o = Self.obj(r.out) else { throw XuiError("qcascade detect не вернул JSON: " + Self.short(r.out)) }
+        let r = try await qc("detect", 90)
+        guard let o = Self.obj(r.out) else { throw XuiError("qcascade detect не отдал JSON: " + Self.why(r)) }
         return o
     }
 

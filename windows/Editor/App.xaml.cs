@@ -9,18 +9,24 @@ namespace QEditor;
 
 public partial class App : Application
 {
-    private static string LogPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "QTerm", "editor-crash.log");
+    /// <summary>Главное окно закрывается — дальше процесс должен только завершиться.</summary>
+    public static bool Exiting { get; private set; }
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         // Windows-1251 / KOI8-R / CP866 в .NET — через провайдер кодовых страниц
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+        // Телеметрия WPF грузит System.Diagnostics.Tracing на выходе (Application.CriticalShutdown). Если к этому
+        // моменту exe подменили обновлением, сборка не читается из бандла → исключение посреди выхода. Грузим сразу.
+        _ = typeof(System.Diagnostics.Tracing.EventSource).Assembly;
 
         var fromQTerm = e.Args.Contains("--from-qterm");
         var files = e.Args.Where(a => !a.StartsWith("--") && File.Exists(a))
                           .Select(Path.GetFullPath).ToList();
+
+        // Копия без окна (упала при закрытии, но жива и держит канал) съедала бы все запуски — убрать
+        EditorProcess.KillZombies("QEditor при запуске");
 
         // Одна копия: если QEditor уже жив — отдать ему файлы/просьбу и выйти
         if (TryHandOff(fromQTerm ? "activate" : files.Count > 0 ? "" : "new", files)) { Shutdown(); return; }
@@ -28,10 +34,17 @@ public partial class App : Application
         DispatcherUnhandledException += (_, a) =>
         {
             Log(a.Exception);
+            if (Exiting)
+            {
+                // Падение посреди выхода (CriticalShutdown не довёл дело): «обработать и жить дальше» = процесс
+                // без окна, который держит канал и глотает все следующие запуски. Только завершиться.
+                Environment.Exit(0);
+            }
             MessageBox.Show(a.Exception.Message, "QEditor", MessageBoxButton.OK, MessageBoxImage.Error);
             a.Handled = true;
         };
         TaskScheduler.UnobservedTaskException += (_, a) => { Log(a.Exception); a.SetObserved(); };
+        AppDomain.CurrentDomain.UnhandledException += (_, a) => { if (a.ExceptionObject is Exception ex) Log(ex); };
 
         // Тема QEditor (своя настройка: Вид → Тема) — до первого окна
         ThemeManager.Init(EditorSettings.Current.Theme);
@@ -65,6 +78,20 @@ public partial class App : Application
         // скрапбук; из QTerm — ждём open по каналу
         foreach (var f in files) win.OpenLocalFile(f);
         if (!fromQTerm && files.Count == 0) win.NewLocalDocument();
+    }
+
+    /// <summary>Главное окно закрылось (вкладки закрыты, настройки сохранены): процесс обязан завершиться.
+    /// Если выход WPF где-то застрянет или упадёт — сторож через 10 с завершит процесс сам.</summary>
+    public static void BeginExit()
+    {
+        if (Exiting) return;
+        Exiting = true;
+        new Thread(() =>
+        {
+            Thread.Sleep(10_000);
+            EditorProcess.Note("QEditor: выход не завершился за 10 с после закрытия окна — завершаю процесс принудительно");
+            Environment.Exit(0);
+        }) { IsBackground = true, Name = "QEditor exit watchdog" }.Start();
     }
 
     private static bool TryHandOff(string op, List<string> files)
@@ -103,13 +130,5 @@ public partial class App : Application
         return ("Segoe UI Variable Text, Segoe UI", 14);
     }
 
-    private static void Log(Exception ex)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
-            File.AppendAllText(LogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {ex}\n\n");
-        }
-        catch { }
-    }
+    private static void Log(Exception ex) => EditorProcess.Note(ex.ToString());
 }

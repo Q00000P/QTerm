@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -17,6 +18,8 @@ public sealed class CascadeServer
     [JsonPropertyName("name")] public string Name { get; set; } = "";
     /// <summary>id SSH-сессии QTerm этого сервера.</summary>
     [JsonPropertyName("ssh")] public string Ssh { get; set; } = "";
+    /// <summary>Хост SSH-сессии — найти сервер, если сессию пересоздали или на другом устройстве у неё другой id.</summary>
+    [JsonPropertyName("host")] public string? Host { get; set; }
     /// <summary>v1: клиент главной, чья подписка стояла на сервере (только для показа; в v2 источники — на сервере).</summary>
     [JsonPropertyName("client")] public string? Client { get; set; }
     [JsonPropertyName("updatedAt")] public string? UpdatedAt { get; set; }
@@ -168,33 +171,53 @@ public sealed class CascadeRemote
         return await RunAsync($"{sudo}{target} < {PipeFile}; rc=$?; rm -f {PipeFile}; exit $rc", timeoutSec);
     }
 
-    /// <summary>Версия qcascade на сервере; null — не установлен.</summary>
+    /// <summary>Версия qcascade на сервере; null — не установлен. Сбой связи или команды — исключение,
+    /// а не «не установлен» (иначе QTerm предложил бы чистую установку поверх рабочей).</summary>
     public async Task<string?> RemoteVersionAsync()
     {
-        var r = await RunAsync($"[ -x {Bin} ] && {Bin} version", 30);
-        if (!r.Ok) return null;
-        var m = Regex.Match(r.Out, @"qcascade\s+(\S+)");
-        return m.Success ? m.Groups[1].Value : null;
+        var r = await RunAsync($"if [ -x {Bin} ]; then {Bin} version; else echo @@NOQC; fi", 30);
+        if (r.Out.Contains("@@NOQC")) return null;
+        var m = Regex.Match(r.Out, @"qcascade\s+(\d+(?:\.\d+)+\S*)");
+        if (m.Success) return m.Groups[1].Value;
+        throw new XuiException("не узнать версию qcascade на сервере: " + Why(r));
     }
 
+    /// <summary>JSON-объект из вывода команды. stderr идёт туда же (RunAsync): предупреждения до объекта
+    /// и строки после него не мешают — объект скрипта всегда начинается с новой строки.</summary>
     private static JsonObject? ParseObj(string s)
     {
-        var i = s.IndexOf('{');
-        if (i < 0) return null;
-        try { return JsonNode.Parse(s[i..]) as JsonObject; } catch { return null; }
+        for (var i = s.IndexOf('{'); i >= 0; i = s.IndexOf('{', i + 1))
+        {
+            if (i > 0 && s[i - 1] != '\n') continue;
+            try
+            {
+                var rd = new Utf8JsonReader(Encoding.UTF8.GetBytes(s[i..]));
+                if (JsonNode.Parse(ref rd) is JsonObject o) return o;
+            }
+            catch (JsonException) { }
+            catch (InvalidOperationException) { }
+        }
+        return null;
+    }
+
+    /// <summary>Почему команда не дала ответа: хвост её вывода (там ошибка) или код возврата.</summary>
+    private static string Why(Result r)
+    {
+        var lines = Clean(r.Out).Replace("\r", "").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        return lines.Length == 0 ? $"пустой ответ (код {r.Rc})" : Short(string.Join("\n", lines.TakeLast(8)));
     }
 
     public async Task<JsonObject> StatusAsync()
     {
-        var r = await QcAsync("status --json 2>/dev/null", 60);
-        return ParseObj(r.Out) ?? throw new XuiException("qcascade status не вернул JSON: " + Short(r.Out));
+        var r = await QcAsync("status --json", 90);
+        return ParseObj(r.Out) ?? throw new XuiException("qcascade status не отдал JSON: " + Why(r));
     }
 
     /// <summary>Что есть на сервере: 3x-ui (инбаунды, клиенты), интерфейсы AWG, MTProto (пользователи, контейнеры).</summary>
     public async Task<JsonObject> DetectAsync()
     {
-        var r = await QcAsync("detect 2>/dev/null", 60);
-        return ParseObj(r.Out) ?? throw new XuiException("qcascade detect не вернул JSON: " + Short(r.Out));
+        var r = await QcAsync("detect", 90);
+        return ParseObj(r.Out) ?? throw new XuiException("qcascade detect не отдал JSON: " + Why(r));
     }
 
     /// <summary>Источники целиком (со ссылками и конфигами — только для правки, в QTerm не хранятся).</summary>

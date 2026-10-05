@@ -297,7 +297,7 @@ struct CascadeWindowView: View {
                     Text("Пользователи процессов:").foregroundStyle(.secondary)
                     TextField("telemt mtproxy", text: $m.mtpUsers).textFieldStyle(.roundedBorder)
                 }
-                Text("mtg и teleproxy (docker) — по мосту докера, telemt и WEB (mtproto-proxy) — по пользователю процесса. Перехватываются только подключения к подсетям Telegram.")
+                Text("mtg и teleproxy (docker) — по мосту докера, telemt и WEB (mtproto-proxy) — по пользователю процесса. Через каскад идут прямые подключения к DC Telegram (mtg, teleproxy, telemt с use_middle_proxy = false). Middle proxy (порт 8888: сток WEB-прокси, telemt по умолчанию) — напрямую: его рукопожатие привязано к IP сервера, через ноду каскада оно не сходится.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
