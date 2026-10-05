@@ -1223,7 +1223,7 @@ nf_down() {
 }
 
 nf_up() { # nf_up [--wait]: ставит правила, если mihomo слушает tproxy-порт
-  local rules full wait=0 i
+  local rules full wait=0
   [ "${1:-}" = --wait ] && wait=1
   rules=$(nf_rules); full=$rules
   nf_down
@@ -1231,7 +1231,8 @@ nf_up() { # nf_up [--wait]: ставит правила, если mihomo слу�
   if [ $wait = 1 ]; then
     # mihomo открывает порты раньше, чем загрузит провайдеры, и до этого сбрасывает соединения —
     # ждём готовности туннеля (первая загрузка rule-set'ов бывает долгой); не дождались — ставим всё равно
-    for ((i=0; i<160; i++)); do mh_ready && break; sleep 0.5; done
+    local t0=$SECONDS
+    while (( SECONDS - t0 < 75 )); do mh_ready && break; sleep 0.5; done
     mh_ready || warn "mihomo ещё грузит провайдеров — перехват ставлю, соединения пойдут, когда догрузит"
   fi
   if ! ss -Hltn "( sport = :$QC_TPROXY_PORT )" 2>/dev/null | grep -q .; then
@@ -1520,6 +1521,8 @@ ExecStartPost=+$QC_SELF nf up --wait
 ExecStopPost=+$QC_SELF nf down
 Restart=always
 RestartSec=3
+# первая загрузка rule-set'ов + ожидание готовности перед перехватом (nf up --wait, до 75 с)
+TimeoutStartSec=150
 LimitNOFILE=1048576
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
