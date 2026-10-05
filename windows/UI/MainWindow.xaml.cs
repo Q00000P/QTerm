@@ -641,7 +641,7 @@ public partial class MainWindow : Window
             Dim(st.Cores > 0 ? $"×{st.Cores}" : "", 0));
         if (st.Load.Length > 0)
             Seg("Load average за 1 / 5 / 15 мин" + (st.Cores > 0 ? $" (на {st.Cores} ядр.: >{st.Cores} — очередь)" : ""),
-                Dim("LA"), Val(st.Load, 0));
+                Dim("LA"), Val(st.Load, right: 0));
 
         if (st.MemTotalMb > 0)
         {
