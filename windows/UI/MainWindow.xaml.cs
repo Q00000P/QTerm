@@ -43,6 +43,8 @@ public partial class MainWindow : Window
     {
         public Guid Id { get; init; }
         public TabKind Kind { get; init; }
+        /// <summary>user@host:port терминальной вкладки (нижняя строка).</summary>
+        public string Endpoint { get; init; } = "";
 
         private string _name = "";
         public string Name { get => _name; set { _name = value; N(); N(nameof(Label)); } }
@@ -494,7 +496,12 @@ public partial class MainWindow : Window
     private void OpenSession(Session session)
     {
         var tabId = Guid.NewGuid();
-        var vm = new TabVM { Id = tabId, Kind = TabKind.Term, Name = session.Name };
+        var vm = new TabVM
+        {
+            Id = tabId, Kind = TabKind.Term, Name = session.Name,
+            Endpoint = (session.Username.Length > 0 ? session.Username + "@" : "") + session.Host +
+                       (session.Port is 22 or 0 ? "" : ":" + session.Port),
+        };
         _tabs.Add(vm);
 
         _bridge!.CreateTerm(tabId);
@@ -569,58 +576,128 @@ public partial class MainWindow : Window
 
     private void RenderMonitor(MonitorStats? st)
     {
+        var vm = _activeTab is { } aid ? _tabs.FirstOrDefault(t => t.Id == aid) : null;
+        RenderHostInfo(vm, st);
         if (st is null) { MonitorBar.Visibility = Visibility.Collapsed; return; }
         MonitorBar.Visibility = Visibility.Visible;
         MonitorPanel.Children.Clear();
 
-        void Chip(string label, string value, int? hotPct = null, string? tooltip = null)
+        Brush Res(string k) => (Brush)FindResource(k);
+        Brush Hot(double pct) => pct >= 90 ? Brushes.IndianRed : pct >= 75 ? Brushes.Orange : Res("AccentBrush");
+        var mono = new FontFamily("Cascadia Mono, Consolas");
+
+        TextBlock Dim(string t, double right = 5) => new()
         {
-            var fg = hotPct switch
+            Text = t, Foreground = Res("DimBrush"), FontSize = 11.5,
+            Margin = new Thickness(0, 0, right, 0), VerticalAlignment = VerticalAlignment.Center,
+        };
+        TextBlock Val(string t, Brush? fg = null, double right = 5) => new()
+        {
+            Text = t, Foreground = fg ?? Res("FgBrush"), FontFamily = mono, FontSize = 12,
+            Margin = new Thickness(0, 0, right, 0), VerticalAlignment = VerticalAlignment.Center,
+        };
+        // полоска заполнения 44×5
+        FrameworkElement Bar(double pct)
+        {
+            const double w = 44;
+            var g = new Grid { Width = w, Height = 5, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+            g.Children.Add(new Border { Background = Res("BorderDim"), CornerRadius = new CornerRadius(2.5) });
+            g.Children.Add(new Border
             {
-                >= 90 => Brushes.IndianRed,
-                >= 80 => Brushes.Orange,
-                _ => (Brush)FindResource("FgBrush"),
-            };
-            var sp = new StackPanel { Orientation = Orientation.Horizontal };
-            if (label.Length > 0)
-                sp.Children.Add(new TextBlock
-                {
-                    Text = label,
-                    Foreground = (Brush)FindResource("DimBrush"),
-                    Margin = new Thickness(0, 0, 5, 0),
-                    FontSize = 11.5,
-                    VerticalAlignment = VerticalAlignment.Center,
-                });
-            sp.Children.Add(new TextBlock
-            {
-                Text = value,
-                Foreground = fg,
-                FontFamily = new FontFamily("Cascadia Mono, Consolas"),
-                FontSize = 12,
-                VerticalAlignment = VerticalAlignment.Center,
+                Background = Hot(pct), CornerRadius = new CornerRadius(2.5),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Width = Math.Max(2, w * Math.Clamp(pct, 0, 100) / 100),
             });
-            var chip = new Border
+            return g;
+        }
+        // мини-график CPU: столбики по последним опросам
+        FrameworkElement Graph(int[] hist)
+        {
+            const double h = 14, bw = 3;
+            var c = new Canvas { Width = 20 * bw, Height = h, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+            c.Children.Add(new Border { Width = 20 * bw, Height = 1, Background = Res("BorderDim") });
+            Canvas.SetTop(c.Children[0], h - 1);
+            var start = 20 - hist.Length;
+            for (var i = 0; i < hist.Length; i++)
             {
-                Background = (Brush)FindResource("Panel2Brush"),
-                CornerRadius = new CornerRadius(5),
-                Padding = new Thickness(8, 2, 8, 2),
-                Margin = new Thickness(0, 2, 6, 2),
-                Child = sp,
-            };
-            if (tooltip is { Length: > 0 }) chip.ToolTip = tooltip;
-            MonitorPanel.Children.Add(chip);
+                var bh = Math.Max(1, h * hist[i] / 100.0);
+                var r = new Border { Width = bw - 1, Height = bh, Background = Hot(hist[i]), CornerRadius = new CornerRadius(1) };
+                Canvas.SetLeft(r, (start + i) * bw);
+                Canvas.SetTop(r, h - bh);
+                c.Children.Add(r);
+            }
+            return c;
+        }
+        void Seg(string? tip, params UIElement[] items)
+        {
+            var sp = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 1, 16, 1), Background = Brushes.Transparent };
+            foreach (var x in items) sp.Children.Add(x);
+            if (tip is { Length: > 0 }) sp.ToolTip = tip;
+            MonitorPanel.Children.Add(sp);
         }
 
-        // Спарклайн капнут (панель резиновая — чипы переносятся, за кадром ничего)
-        var spark = st.Spark.Length > 12 ? st.Spark[^12..] : st.Spark;
-        Chip("CPU", $"{spark} {st.CpuPct}%", st.CpuPct);
-        var memPct = st.MemTotalMb > 0 ? (int)(100 * st.MemUsedMb / st.MemTotalMb) : 0;
-        Chip("RAM", $"{st.MemUsedMb / 1024.0:0.0}/{st.MemTotalMb / 1024.0:0.0} ГБ", memPct);
-        Chip("", $"↑{st.TxMbps:0.00} ↓{st.RxMbps:0.00} Mb/s");
-        if (st.Uptime.Length > 0) Chip("up", st.Uptime);
-        if (st.Users > 0) Chip("польз", st.Users.ToString(), tooltip: st.UsersDetail);
-        foreach (var d in st.Disks) Chip(d.Mount, $"{d.Pct}%", d.Pct);
+        Seg($"Загрузка CPU, последняя минута" + (st.Cores > 0 ? $"\nЯдер: {st.Cores}" : ""),
+            Dim("CPU"), Graph(st.History), Val($"{st.CpuPct}%", st.CpuPct >= 75 ? Hot(st.CpuPct) : null),
+            Dim(st.Cores > 0 ? $"×{st.Cores}" : "", 0));
+        if (st.Load.Length > 0)
+            Seg("Load average за 1 / 5 / 15 мин" + (st.Cores > 0 ? $" (на {st.Cores} ядр.: >{st.Cores} — очередь)" : ""),
+                Dim("LA"), Val(st.Load, 0));
+
+        if (st.MemTotalMb > 0)
+        {
+            var memPct = 100.0 * st.MemUsedMb / st.MemTotalMb;
+            Seg($"Память: занято {st.MemUsedMb} из {st.MemTotalMb} МБ ({memPct:0}%)",
+                Dim("RAM"), Bar(memPct), Val(MemPair(st.MemUsedMb, st.MemTotalMb)), Dim($"{memPct:0}%", 0));
+        }
+
+        foreach (var d in st.Disks)
+        {
+            if (d.ReadOnly)
+                Seg($"{d.Mount}: только чтение (прошивка), {FmtSize(d.TotalKb)}",
+                    Dim(d.Mount), Val(FmtSize(d.TotalKb)), Dim("ro", 0));
+            else
+                Seg($"{d.Mount}: занято {FmtSize(d.UsedKb)} из {FmtSize(d.TotalKb)}, свободно {FmtSize(d.TotalKb - d.UsedKb)}",
+                    Dim(d.Mount), Bar(d.Pct), Val(d.TotalKb > 0 ? $"{FmtSize(d.UsedKb, false)}/{FmtSize(d.TotalKb)}" : ""),
+                    Dim($"{d.Pct}%", 0));
+        }
+
+        Seg("Сеть (все интерфейсы кроме lo): приём ↓ / отдача ↑",
+            Val("↓" + Rate(st.RxMbps), Brushes.MediumSeaGreen), Val("↑" + Rate(st.TxMbps), Res("AccentBrush")),
+            Dim("Mb/s", 0));
+        if (st.TempC is { } t)
+            Seg("Температура (thermal_zone0)", Dim("t°"), Val($"{t:0}°C", t >= 80 ? Brushes.IndianRed : t >= 70 ? Brushes.Orange : null, 0));
+        if (st.Uptime.Length > 0) Seg("Аптайм", Dim("up"), Val(st.Uptime, null, 0));
+        if (st.Users > 0) Seg(st.UsersDetail, Dim("польз"), Val(st.Users.ToString(), null, 0));
     }
+
+    /// <summary>Нижняя строка слева: имя хоста · ОС · арх · user@адрес:порт.</summary>
+    private void RenderHostInfo(TabVM? vm, MonitorStats? st)
+    {
+        if (vm is null || vm.Kind != TabKind.Term) { HostInfo.Text = ""; HostInfo.ToolTip = null; return; }
+        var parts = new List<string>();
+        if (st is not null)
+        {
+            if (st.Host.Length > 0) parts.Add(st.Host);
+            if (st.Os.Length > 0) parts.Add(st.Os);
+            if (st.Arch.Length > 0) parts.Add(st.Arch);
+        }
+        if (vm.Endpoint.Length > 0) parts.Add(vm.Endpoint);
+        HostInfo.Text = string.Join("  ·  ", parts);
+        HostInfo.ToolTip = HostInfo.Text.Length > 0 ? HostInfo.Text : null;
+    }
+
+    private static string MemPair(long usedMb, long totalMb) =>
+        totalMb < 4096 ? $"{usedMb}/{totalMb} МБ" : $"{usedMb / 1024.0:0.0}/{totalMb / 1024.0:0.0} ГБ";
+
+    private static string FmtSize(long kb, bool unit = true)
+    {
+        var (v, u) = kb >= 1024 * 1024 ? (kb / 1024.0 / 1024, "ГБ") : (kb / 1024.0, "МБ");
+        var n = v >= 100 ? $"{v:0}" : v >= 10 ? $"{v:0.#}" : $"{v:0.##}";
+        return unit ? $"{n} {u}" : n;
+    }
+
+    private static string Rate(double mbps) =>
+        mbps >= 100 ? $"{mbps:0}" : mbps >= 10 ? $"{mbps:0.0}" : $"{mbps:0.00}";
 
     // ── Вкладки (терминалы + редакторы) ─────────────────────────────
 
@@ -694,7 +771,7 @@ public partial class MainWindow : Window
             {
                 Placeholder.Visibility = Visibility.Visible;
                 Web.Visibility = Visibility.Visible;
-                MonitorBar.Visibility = Visibility.Collapsed;
+                RenderMonitor(null);
             }
         }
         return true;

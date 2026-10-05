@@ -130,25 +130,61 @@
                 </Grid>
             </Border>
 
-            <!-- Нижняя панель: мониторинг активной ноды (моба-стиль) слева, кнопки справа -->
+            <!-- Нижняя панель: сверху метрики активной ноды, под ними — хост слева и компактные кнопки справа -->
             <Border Grid.Row="3" Margin="6,0,6,6"
                     Background="{DynamicResource PanelBrush}"
                     BorderBrush="{DynamicResource BorderDim}" BorderThickness="1,0,1,1">
-                <DockPanel>
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="6,3">
-                        <Button x:Name="BroadcastButton" Content="Во все"
-                                Click="Broadcast_Click" Margin="0,0,4,0"
-                                ToolTip="Сквозной ввод: клавиатура летит во все терминалы. ОСТОРОЖНО со стрелками/Tab — каждая нода подставит СВОЮ историю. Одинаковое везде — набор, вставка или сниппет из «Команд»"/>
-                        <Button x:Name="ClearButton" Content="Очистить" Click="ClearTerm_Click" Margin="0,0,4,0"/>
-                        <Button x:Name="GitButton" Content="Git"
-                                Click="GitButton_Click" MouseRightButtonUp="GitButton_RightClick" Margin="0,0,4,0"/>
-                        <Button x:Name="SnippetsButton" Content="Команды" Click="SnippetsButton_Click" Margin="0,0,4,0"/>
-                        <Button x:Name="FilesButton" Content="Файлы" Click="FilesButton_Click"/>
-                    </StackPanel>
-                    <Border x:Name="MonitorBar" Visibility="Collapsed" VerticalAlignment="Center">
-                        <WrapPanel x:Name="MonitorPanel" Margin="6,3"/>
+                <Border.Resources>
+                    <Style x:Key="BarBtn" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Setter Property="Padding" Value="10,2"/>
+                        <Setter Property="MinHeight" Value="22"/>
+                        <Setter Property="FontSize" Value="12"/>
+                        <Setter Property="Margin" Value="4,0,0,0"/>
+                        <Setter Property="Focusable" Value="False"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                            CornerRadius="5" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}"/>
+                                            <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource HoverEdge}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelBrush}"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Border.Resources>
+                <StackPanel>
+                    <!-- уровень 1: метрики -->
+                    <Border x:Name="MonitorBar" Visibility="Collapsed" Padding="10,6,10,5"
+                            BorderBrush="{DynamicResource BorderDim}" BorderThickness="0,0,0,1">
+                        <WrapPanel x:Name="MonitorPanel"/>
                     </Border>
-                </DockPanel>
+                    <!-- уровень 2: хост + кнопки -->
+                    <DockPanel Margin="10,4,6,4">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="BroadcastButton" Style="{StaticResource BarBtn}" Content="Во все"
+                                    Click="Broadcast_Click"
+                                    ToolTip="Сквозной ввод: клавиатура летит во все терминалы. ОСТОРОЖНО со стрелками/Tab — каждая нода подставит СВОЮ историю. Одинаковое везде — набор, вставка или сниппет из «Команд»"/>
+                            <Button x:Name="ClearButton" Style="{StaticResource BarBtn}" Content="Очистить" Click="ClearTerm_Click"/>
+                            <Button x:Name="GitButton" Style="{StaticResource BarBtn}" Content="Git"
+                                    Click="GitButton_Click" MouseRightButtonUp="GitButton_RightClick"/>
+                            <Button x:Name="SnippetsButton" Style="{StaticResource BarBtn}" Content="Команды" Click="SnippetsButton_Click"/>
+                            <Button x:Name="FilesButton" Style="{StaticResource BarBtn}" Content="Файлы" Click="FilesButton_Click"/>
+                        </StackPanel>
+                        <TextBlock x:Name="HostInfo" VerticalAlignment="Center" FontSize="12"
+                                   Foreground="{DynamicResource DimBrush}" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                </StackPanel>
             </Border>
         </Grid>
 

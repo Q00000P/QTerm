@@ -3,14 +3,25 @@ using Renci.SshNet;
 
 namespace QTermWin.Terminal;
 
-public sealed record DiskStat(string Mount, int Pct);
+public sealed record DiskStat(string Mount, int Pct, long UsedKb = 0, long TotalKb = 0, bool ReadOnly = false);
 
 public sealed record MonitorStats(
     int CpuPct, string Spark,
     long MemUsedMb, long MemTotalMb,
     double RxMbps, double TxMbps,
     string Uptime, int Users, string UsersDetail,
-    List<DiskStat> Disks);
+    List<DiskStat> Disks)
+{
+    /// <summary>CPU % за последние опросы (для мини-графика).</summary>
+    public int[] History { get; init; } = [];
+    public string Host { get; init; } = "";
+    public string Os { get; init; } = "";
+    public string Arch { get; init; } = "";
+    public int Cores { get; init; }
+    /// <summary>Load average 1/5/15 мин.</summary>
+    public string Load { get; init; } = "";
+    public double? TempC { get; init; }
+}
 
 /// <summary>
 /// Панель мониторинга (моба-стиль): раз в 3с один exec-запрос по живому
@@ -25,7 +36,14 @@ public sealed class ServerMonitor : IDisposable
         "echo @3; cat /proc/uptime; " +
         "echo @4; cat /proc/net/dev; " +
         "echo @5; df -P 2>/dev/null; " +
-        "echo @6; who 2>/dev/null";
+        "echo @6; who 2>/dev/null; " +
+        "echo @7; cat /proc/sys/kernel/hostname 2>/dev/null; " +
+        "echo @8; cat /proc/loadavg 2>/dev/null; " +
+        "echo @9; grep -c ^processor /proc/cpuinfo 2>/dev/null; " +
+        "echo @10; uname -m 2>/dev/null; " +
+        "echo @11; (. /etc/os-release 2>/dev/null && echo \"$PRETTY_NAME\"); " +
+        "echo @12; cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null; " +
+        "echo @13; grep -E ' (/|/opt|/boot) ' /proc/mounts 2>/dev/null";
 
     private readonly SshClient _client;
     private readonly Timer _timer;
@@ -138,7 +156,15 @@ public sealed class ServerMonitor : IDisposable
         }
         _prevRx = rx; _prevTx = tx; _prevNetAt = now;
 
-        // Диски: /, /opt, /boot (df -P: Use% в 5-й колонке, маунт в 6-й)
+        // ro-маунты (squashfs корня роутера всегда 100% — это не «диск забит»)
+        var ro = new Dictionary<string, bool>();
+        foreach (var l in sec.GetValueOrDefault("@13", new()))
+        {
+            var c = l.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (c.Length >= 4) ro[c[1]] = c[3] == "ro" || c[3].StartsWith("ro,"); // последняя запись — действующая
+        }
+
+        // Диски: /, /opt, /boot (df -P: размер, занято, свободно, Use%, маунт — считаем с конца)
         var disks = new List<DiskStat>();
         var want = new[] { "/", "/opt", "/boot" };
         foreach (var l in sec.GetValueOrDefault("@5", new()).Skip(1))
@@ -148,7 +174,11 @@ public sealed class ServerMonitor : IDisposable
             var mount = cols[^1];
             if (!want.Contains(mount)) continue;
             if (int.TryParse(cols[^2].TrimEnd('%'), out var pct))
-                disks.Add(new DiskStat(mount, pct));
+            {
+                long.TryParse(cols[^5], out var totKb);
+                long.TryParse(cols[^4], out var usedKb);
+                disks.Add(new DiskStat(mount, pct, usedKb, totKb, ro.GetValueOrDefault(mount)));
+            }
         }
         disks = disks.OrderBy(d => d.Mount.Length).Take(3).ToList();
 
@@ -161,7 +191,23 @@ public sealed class ServerMonitor : IDisposable
             return c.Length >= 2 ? $"{c[0]} — {c[1]}" + (l.Contains('(') ? " " + l[l.IndexOf('(')..] : "") : l;
         }));
 
-        return new MonitorStats(cpuPct, spark, usedMb, totalMb, rxMbps, txMbps, up, users, detail, disks);
+        string First(string k) => sec.GetValueOrDefault(k) is { Count: > 0 } x ? x[0].Trim() : "";
+        var load = string.Join(" ", First("@8").Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(3));
+        int.TryParse(First("@9"), out var cores);
+        double? temp = null;
+        if (long.TryParse(First("@12"), out var milli) && milli > 0)
+            temp = milli > 1000 ? milli / 1000.0 : milli;
+
+        return new MonitorStats(cpuPct, spark, usedMb, totalMb, rxMbps, txMbps, up, users, detail, disks)
+        {
+            History = _history.ToArray(),
+            Host = First("@7"),
+            Load = load,
+            Cores = cores,
+            Arch = First("@10"),
+            Os = First("@11"),
+            TempC = temp,
+        };
     }
 
     public void Dispose()
