@@ -75,6 +75,8 @@
                     ToolTip="Клиенты awg-panel всех нод: создать, вкл/выкл, конфиг, QR"/>
             <Button x:Name="SegUpdates" Style="{StaticResource Seg}" Content="Обновления" Tag="updates" Click="Seg_Click"
                     ToolTip="Версии панелей и ядра Xray: обновление с бэкапом, смена ядра, бэкапы и откат"/>
+            <Button x:Name="SegCascade" Style="{StaticResource Seg}" Content="Каскад" Tag="cascade" Click="Seg_Click"
+                    ToolTip="Сервер с 3x-ui и AWG как маршрутизатор «как на Кинетике»: mihomo с правилами роутеров, ноды из единой подписки"/>
         </StackPanel>
 
         <Grid Grid.Row="2">
@@ -299,6 +301,63 @@
                     </ListView.View>
                 </ListView>
             </Grid>
+
+            <!-- ── Каскад: qcascade на сервере (mihomo + перехват 3x-ui) ── -->
+            <DockPanel x:Name="CascadeView" Visibility="Collapsed">
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <TextBlock Text="Сервер:" Style="{StaticResource Dim}" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="CascBox" Width="200" SelectionChanged="CascBox_Changed" VerticalAlignment="Center"
+                              ToolTip="Каскад-сервер — SSH-сессия QTerm, на которой стоит (или будет стоять) qcascade"/>
+                    <Button Content="＋ Сервер…" Click="CascAdd_Click" Margin="8,0,0,0"
+                            ToolTip="Выбрать SSH-сессию сервера с 3x-ui (+ AWG), который станет каскадом"/>
+                    <Button Content="Установить / обновить…" Click="CascInstall_Click" Margin="6,0,0,0"
+                            ToolTip="Скрипт встроен в QTerm и заливается сам. Установка идёт на сервере в фоне и переживает обрыв SSH; ход — в логе внизу"/>
+                    <Button Content="Статус" Click="CascRefresh_Click" Margin="6,0,0,0" ToolTip="Опросить сервер: mihomo, группы, перехват"/>
+                    <Button Content="Применить" Click="CascApply_Click" Margin="6,0,0,0"
+                            ToolTip="Пересобрать конфиг mihomo по подписке, группам и правилам: проверка → рестарт → откат при сбое"/>
+                    <TextBox x:Name="CascStatus" Style="{StaticResource DimSel}" Margin="12,0,0,0"/>
+                </DockPanel>
+                <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <Button Content="Подписка…" Click="CascSub_Click" Margin="0,0,6,4"
+                            ToolTip="Откуда брать ноды: клиент главной (Clash-ссылка), новый клиент на всех серверах или своя ссылка"/>
+                    <Button Content="Кого каскадить…" Click="CascWho_Click" Margin="0,0,6,4"
+                            ToolTip="Всех клиентов 3x-ui этого сервера, выбранные инбаунды, выбранных клиентов или никого"/>
+                    <Button Content="DIRECT →…" Click="CascDirect_Click" Margin="0,0,6,4"
+                            ToolTip="Куда идёт DIRECT из правил (ru-трафик, MATCH): напрямую с сервера или через группу (MSK)"/>
+                    <Button Content="Группы…" Click="CascGroups_Click" Margin="0,0,6,4"
+                            ToolTip="Составные группы (TG, EU, FII…) — правка и применение"/>
+                    <Button Content="Правила…" Click="CascRules_Click" Margin="0,0,6,4"
+                            ToolTip="rule-providers и rules — тот же формат, что в config.yaml Кинетика; правка и применение"/>
+                    <Button Content="Ядро mihomo…" Click="CascCore_Click" Margin="0,0,6,4"
+                            ToolTip="Обновить ядро: последний стоковый MetaCubeX или своя сборка по ссылке (ff148). С проверкой и откатом"/>
+                    <Button Content="Журнал mihomo" Click="CascLogs_Click" Margin="0,0,6,4"/>
+                    <Button Content="Убрать…" Click="CascRemove_Click" Margin="0,0,6,4"
+                            ToolTip="Снять перехват и удалить qcascade с сервера или только убрать сервер из QTerm"/>
+                </WrapPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MinWidth="320"/>
+                        <ColumnDefinition Width="6"/>
+                        <ColumnDefinition Width="*" MinWidth="320"/>
+                    </Grid.ColumnDefinitions>
+                    <ListView x:Name="CascGroups" Grid.Column="0" Style="{StaticResource Grid}">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="" Width="30">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate><TextBlock Text="●" Foreground="{Binding Dot}"/></DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Группа" Width="110" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="Нода" Width="150" DisplayMemberBinding="{Binding Node}"/>
+                                <GridViewColumn Header="Задержка" Width="120" DisplayMemberBinding="{Binding Delay}"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                    <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="Transparent"/>
+                    <TextBox x:Name="CascInfo" Grid.Column="2" Style="{StaticResource Mono}" TextWrapping="Wrap"/>
+                </Grid>
+            </DockPanel>
 
             <!-- ── Первая настройка: нет главной ── -->
             <Border x:Name="SetupView" Background="{DynamicResource BgBrush}" Visibility="Collapsed">

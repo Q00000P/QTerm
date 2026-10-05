@@ -5,7 +5,7 @@ name: windows
 on:
   push:
     branches: [main, 'win-*']
-    paths: ['windows/**', '.github/workflows/windows.yml']
+    paths: ['windows/**', 'scripts/**', '.github/workflows/windows.yml']
   workflow_dispatch:
 
 permissions:

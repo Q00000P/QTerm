@@ -9,7 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>QTerm</AssemblyName>
     <RootNamespace>QTermWin</RootNamespace>
-    <Version>3.11.11</Version>
+    <Version>3.12.0</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- Per-Monitor V2: чёткий UI и верные координаты на мониторах с разным масштабом -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -42,6 +42,11 @@
 
   <ItemGroup>
     <Content Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Каскад: скрипт сервера (qcascade) — один на мак и винду, в корне репо; QTerm заливает его на сервер сам -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\scripts\vpn-cascade.sh" LogicalName="vpn-cascade.sh" />
   </ItemGroup>
 
   <!-- Editor\ — отдельное приложение QEditor.exe со своим csproj: из QTerm его

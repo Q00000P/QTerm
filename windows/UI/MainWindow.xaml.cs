@@ -853,7 +853,12 @@ public partial class MainWindow : Window
     {
         if (_xuiWin is null || !_xuiWin.IsLoaded)
         {
-            _xuiWin = new XuiWindow(_repo) { RunInTerminal = RunInSessionAsync };
+            _xuiWin = new XuiWindow(_repo)
+            {
+                RunInTerminal = RunInSessionAsync,
+                ExecInSession = ExecInSessionAsync,
+                SessionConnected = id => ConnectedClient(id) is not null,
+            };
             _xuiWin.Closed += (_, _) => _xuiWin = null;
             Closed += (_, _) => _xuiWin?.Close();
             _xuiWin.Show();
@@ -1112,6 +1117,42 @@ public partial class MainWindow : Window
         ctl.Write(System.Text.Encoding.UTF8.GetBytes(command + "\n"));
         FocusTerminal();
         return true;
+    }
+
+    /// <summary>Живое SSH-соединение ноды (любая подключённая вкладка этой сессии).</summary>
+    private Renci.SshNet.SshClient? ConnectedClient(Guid sessionId)
+    {
+        lock (_controllers)
+            foreach (var (id, c) in _controllers)
+                if (c.SessionRef.Id == sessionId && _tabStates.GetValueOrDefault(id) == SessState.Connected &&
+                    c.NetHandles().Client is { IsConnected: true } cl)
+                    return cl;
+        return null;
+    }
+
+    /// <summary>Команда отдельным exec-каналом поверх соединения ноды — терминал не трогается.
+    /// Нода не подключена — открываем её вкладку (вход, ключи, TOFU — как обычно) и ждём подключения.
+    /// Возвращает stdout (stderr вызывающий сливает сам: 2&gt;&amp;1).</summary>
+    public async Task<string> ExecInSessionAsync(Guid sessionId, string command, int timeoutSec)
+    {
+        var s = _repo.Data.Sessions.FirstOrDefault(x => x.Id == sessionId && x.Deleted != true)
+                ?? throw new InvalidOperationException("SSH-сессия сервера не найдена (удалена?)");
+        var client = ConnectedClient(sessionId);
+        if (client is null)
+        {
+            OpenSession(s);
+            for (int i = 0; i < 120 && (client = ConnectedClient(sessionId)) is null; i++) await Task.Delay(500);
+            if (client is null) throw new InvalidOperationException($"«{s.Name}» не подключилась по SSH");
+        }
+        var cl = client;
+        return await Task.Run(() =>
+        {
+            using var c = cl.CreateCommand(command);
+            c.CommandTimeout = TimeSpan.FromSeconds(timeoutSec);
+            try { return c.Execute(); }
+            catch (Renci.SshNet.Common.SshOperationTimeoutException)
+            { throw new InvalidOperationException($"«{s.Name}»: команда не уложилась в {timeoutSec} с"); }
+        });
     }
 
     /// <summary>Команду — в активный терминал (или во все при «Во все»); нет терминала — в буфер.</summary>

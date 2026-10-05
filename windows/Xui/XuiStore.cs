@@ -159,6 +159,41 @@ public sealed class XuiStore
         _repo.Persist();
     }
 
+    // ── каскад-серверы (qcascade) ──
+
+    private const string CascadePrefix = "xui.cascade:";
+
+    public List<CascadeServer> Cascades()
+    {
+        var list = new List<CascadeServer>();
+        foreach (var (k, v) in Secrets)
+        {
+            if (!k.StartsWith(CascadePrefix, StringComparison.Ordinal)) continue;
+            try
+            {
+                var c = JsonSerializer.Deserialize<CascadeServer>(v, Json);
+                if (c is not null && c.Deleted != true) list.Add(c);
+            }
+            catch { /* битая запись — пропускаем */ }
+        }
+        return list.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    public void SaveCascade(CascadeServer c)
+    {
+        c.UpdatedAt = QtJson.NowIso();
+        c.Deleted = null;
+        Secrets[CascadePrefix + c.Id.ToString("D").ToUpperInvariant()] = JsonSerializer.Serialize(c, Json);
+        _repo.Persist();
+    }
+
+    public void DeleteCascade(Guid id)
+    {
+        var stub = new CascadeServer { Id = id, Deleted = true, UpdatedAt = QtJson.NowIso() };
+        Secrets[CascadePrefix + id.ToString("D").ToUpperInvariant()] = JsonSerializer.Serialize(stub, Json);
+        _repo.Persist();
+    }
+
     // ── синк: записи xui.* — LWW по встроенному updatedAt (остальные секреты — локальный приоритет) ──
 
     public static bool IsLww(string key) => key.StartsWith("xui.", StringComparison.Ordinal);
