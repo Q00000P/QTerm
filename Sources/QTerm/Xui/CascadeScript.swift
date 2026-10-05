@@ -28,7 +28,7 @@ enum CascadeScript {
 # QC_SOURCES_FILE (JSON источников для install; файл удаляется).
 
 set -Eeuo pipefail
-VERSION="2.0.2"
+VERSION="2.0.3"
 
 QC_ROOT=${QC_ROOT:-}            # только для тестов: префикс всех путей
 QC_ETC=$QC_ROOT/etc/qcascade
@@ -1534,6 +1534,8 @@ websink_conf() { # конфиг telemt-стока из секретов WEB; з�
   while IFS= read -r s; do [ -n "$s" ] || continue; i=$((i+1)); body+="web$i = \"$s\""$'\n'; done < <(websink_secrets)
   [ $i -gt 0 ] || { err "в $WEB_ENV нет секретов профилей WEB-прокси"; return 1; }
   install -d -m 755 "$QC_ETC"
+  install -d -m 750 -o mtproxy -g mtproxy "$WEBSINK_DIR" "$WEBSINK_DIR/tlsfront" 2>/dev/null \
+    || install -d -m 750 "$WEBSINK_DIR" "$WEBSINK_DIR/tlsfront"
   tmp=$(mktemp "$QC_ETC/.websink.XXXX"); CLEAN+=("$tmp")
   cat > "$tmp" <<EOF
 # qcascade: сток WEB-прокси — telemt напрямую к DC (через каскад). Собран из $WEB_ENV, руками не править.
@@ -1597,12 +1599,15 @@ websink_dropin() { # текст drop-in стока (по нему же свер�
 Type=simple
 User=mtproxy
 Group=mtproxy
+# песочница апстримного юнита скроена под mtproto-proxy: telemt нужны netlink (интерфейсы) и /proc целиком
+RestrictAddressFamilies=
+ProcSubset=all
+ProtectProc=default
 ExecStartPre=+${QC_SELF#"$QC_ROOT"} websink conf
 ExecStart=
 ExecStart=$1 ${WEBSINK_CONF#"$QC_ROOT"}
 WorkingDirectory=${WEBSINK_DIR#"$QC_ROOT"}
 ReadWritePaths=${WEBSINK_DIR#"$QC_ROOT"}
-LimitNOFILE=65536
 EOF
 }
 
@@ -1628,8 +1633,6 @@ websink_sync() { # привести сток WEB к настройкам; есл
   websink_want || { websink_off; return 0; }
   bin=$(websink_bin) || { warn "WEB-прокси: без telemt сток остаётся официальным (middle proxy, к Telegram напрямую)"; return 0; }
   websink_conf || return 0
-  install -d -m 750 -o mtproxy -g mtproxy "$WEBSINK_DIR" "$WEBSINK_DIR/tlsfront" 2>/dev/null \
-    || install -d -m 750 "$WEBSINK_DIR" "$WEBSINK_DIR/tlsfront"
   text=$(websink_dropin "$bin")
   if [ -f "$d" ] && [ "$(cat "$d")" = "$text" ]; then
     systemctl is-active -q "$WEB_UNIT" || systemctl restart "$WEB_UNIT" 2>/dev/null || true
