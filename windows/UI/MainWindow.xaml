@@ -94,23 +94,9 @@
                 </DockPanel>
             </Border>
 
-            <!-- Вкладки — все на виду, переносятся строками на всю ширину; кнопки — отдельной строкой под ними -->
+            <!-- Вкладки — все на виду, переносятся строками на всю ширину; кнопки — в нижней панели -->
             <Grid Grid.Row="0" Margin="6,6,6,0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,4">
-                    <Button x:Name="BroadcastButton" Content="Во все"
-                            Click="Broadcast_Click" Margin="0,0,4,0"
-                            ToolTip="Сквозной ввод: клавиатура летит во все терминалы. ОСТОРОЖНО со стрелками/Tab — каждая нода подставит СВОЮ историю. Одинаковое везде — набор, вставка или сниппет из «Команд»"/>
-                    <Button x:Name="ClearButton" Content="Очистить" Click="ClearTerm_Click" Margin="0,0,4,0"/>
-                    <Button x:Name="GitButton" Content="Git"
-                            Click="GitButton_Click" MouseRightButtonUp="GitButton_RightClick" Margin="0,0,4,0"/>
-                    <Button x:Name="SnippetsButton" Content="Команды" Click="SnippetsButton_Click" Margin="0,0,4,0"/>
-                    <Button x:Name="FilesButton" Content="Файлы" Click="FilesButton_Click"/>
-                </StackPanel>
-                <ItemsControl x:Name="TabStrip" Grid.Row="0">
+                <ItemsControl x:Name="TabStrip">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
@@ -144,12 +130,25 @@
                 </Grid>
             </Border>
 
-            <!-- Панель мониторинга (моба-стиль), для активной терминальной вкладки -->
-            <Border Grid.Row="3" Margin="6,0,6,6" x:Name="MonitorBar"
+            <!-- Нижняя панель: мониторинг активной ноды (моба-стиль) слева, кнопки справа -->
+            <Border Grid.Row="3" Margin="6,0,6,6"
                     Background="{DynamicResource PanelBrush}"
-                    BorderBrush="{DynamicResource BorderDim}" BorderThickness="1,0,1,1"
-                    Visibility="Collapsed">
-                <WrapPanel x:Name="MonitorPanel" Margin="6,3"/>
+                    BorderBrush="{DynamicResource BorderDim}" BorderThickness="1,0,1,1">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="6,3">
+                        <Button x:Name="BroadcastButton" Content="Во все"
+                                Click="Broadcast_Click" Margin="0,0,4,0"
+                                ToolTip="Сквозной ввод: клавиатура летит во все терминалы. ОСТОРОЖНО со стрелками/Tab — каждая нода подставит СВОЮ историю. Одинаковое везде — набор, вставка или сниппет из «Команд»"/>
+                        <Button x:Name="ClearButton" Content="Очистить" Click="ClearTerm_Click" Margin="0,0,4,0"/>
+                        <Button x:Name="GitButton" Content="Git"
+                                Click="GitButton_Click" MouseRightButtonUp="GitButton_RightClick" Margin="0,0,4,0"/>
+                        <Button x:Name="SnippetsButton" Content="Команды" Click="SnippetsButton_Click" Margin="0,0,4,0"/>
+                        <Button x:Name="FilesButton" Content="Файлы" Click="FilesButton_Click"/>
+                    </StackPanel>
+                    <Border x:Name="MonitorBar" Visibility="Collapsed" VerticalAlignment="Center">
+                        <WrapPanel x:Name="MonitorPanel" Margin="6,3"/>
+                    </Border>
+                </DockPanel>
             </Border>
         </Grid>
 
