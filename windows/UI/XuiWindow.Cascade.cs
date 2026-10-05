@@ -71,8 +71,12 @@ public partial class XuiWindow
         await RefreshCascadeAsync();
     }
 
-    private bool CascSid(CascadeServer c, out Guid sid) =>
-        Guid.TryParse(c.Ssh, out sid) && _store.Sessions().Any(s => s.Id == sid);
+    private bool CascSid(CascadeServer c, out Guid sid)
+    {
+        if (!Guid.TryParse(c.Ssh, out var id)) { sid = Guid.Empty; return false; }
+        sid = id;
+        return _store.Sessions().Any(s => s.Id == id);
+    }
 
     private CascadeRemote Remote(CascadeServer c)
     {

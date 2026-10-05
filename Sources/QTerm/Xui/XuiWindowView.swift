@@ -28,8 +28,9 @@ struct XuiWindowView: View {
                     case .names: namesView
                     case .awg: awgView
                     case .updates: updatesView
+                    case .cascade: cascadeView
                     }
-                    if m.noMaster && m.seg != .awg && m.seg != .updates { setupCard }
+                    if m.noMaster && m.seg != .awg && m.seg != .updates && m.seg != .cascade { setupCard }
                 }
                 .frame(minHeight: 260)
                 logView.frame(minHeight: 70, idealHeight: 140)
@@ -42,6 +43,11 @@ struct XuiWindowView: View {
             takeNodeAddRequest()
             let st = state
             m.runInTerminal = { [weak st] id, cmd in await st?.runInSession(id, cmd) ?? false }
+            m.execInSession = { [weak st] id, cmd, t in
+                guard let st else { throw XuiError("QTerm закрывается") }
+                return try await st.execInSession(id, cmd, timeout: t)
+            }
+            m.sessionConnected = { [weak st] id in st?.sessionConnected(id) ?? false }
             let mm = m
             center.notice = { [weak mm] s, k in mm?.log(s, k) }
         }
@@ -50,6 +56,8 @@ struct XuiWindowView: View {
         .sheet(item: $m.connectRequest) { req in ConnectSheet(req: req) { r in m.connectRequest = nil; req.done?(r) } }
         .sheet(item: $m.qr) { XuiQRSheet(info: $0) }
         .sheet(item: $m.pickRequest) { req in PickSheet(req: req) { v in m.pickRequest = nil; req.done?(v) } }
+        .sheet(item: $m.textEditRequest) { req in TextEditSheet(req: req) { v in m.textEditRequest = nil; req.done?(v) } }
+        .sheet(item: $m.checkRequest) { req in CheckSheet(req: req) { v in m.checkRequest = nil; req.done?(v) } }
         .sheet(isPresented: $m.showPanels, onDismiss: { Task { await m.reloadPanels() } }) {
             PanelsSheet(store: m.store)
         }
@@ -88,6 +96,7 @@ struct XuiWindowView: View {
                     switch m.seg {
                     case .awg: await m.refreshAwg()
                     case .updates: await m.refreshUpdates()
+                    case .cascade: await m.refreshCascade()
                     default: await m.refresh()
                     }
                 }
@@ -489,6 +498,65 @@ struct XuiWindowView: View {
         let f = DateFormatter(); f.dateFormat = "dd.MM.yyyy HH:mm:ss"; return f
     }()
 
+    // MARK: каскад
+
+    private var cascadeView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("Сервер:").foregroundStyle(.secondary)
+                Picker("", selection: $m.cascId) {
+                    if m.cascades.isEmpty { Text("—").tag("") }
+                    ForEach(m.cascades) { Text($0.name).tag($0.id) }
+                }
+                .labelsHidden()
+                .frame(width: 200)
+                .help("Каскад-сервер — SSH-сессия QTerm, на которой стоит (или будет стоять) qcascade")
+                Button("＋ Сервер…") { Task { await m.cascAdd() } }
+                    .help("Выбрать SSH-сессию сервера с 3x-ui (+ AWG), который станет каскадом")
+                Button("Установить / обновить…") { Task { await m.cascInstall() } }
+                    .help("Скрипт встроен в QTerm и заливается сам. Установка идёт на сервере в фоне и переживает обрыв SSH; ход — в логе внизу")
+                Button("Статус") { Task { await m.refreshCascade() } }
+                Button("Применить") { Task { await m.cascApply() } }
+                    .help("Пересобрать конфиг mihomo по подписке, группам и правилам: проверка → рестарт → откат при сбое")
+                Spacer()
+            }
+            HStack(spacing: 6) {
+                Button("Подписка…") { Task { await m.cascSub() } }
+                    .help("Откуда брать ноды: клиент главной (Clash-ссылка), новый клиент на всех серверах или своя ссылка")
+                Button("Кого каскадить…") { Task { await m.cascWho() } }
+                    .help("Всех клиентов 3x-ui этого сервера, выбранные инбаунды, выбранных клиентов или никого")
+                Button("DIRECT →…") { Task { await m.cascDirect() } }
+                    .help("Куда идёт DIRECT из правил (ru-трафик, MATCH): напрямую с сервера или через группу (MSK)")
+                Button("Группы…") { Task { await m.cascGroups() } }
+                Button("Правила…") { Task { await m.cascRules() } }
+                Button("Ядро mihomo…") { Task { await m.cascCore() } }
+                    .help("Последний стоковый MetaCubeX или своя сборка по ссылке (ff148). С проверкой и откатом")
+                Button("Журнал mihomo") { Task { await m.cascLogs() } }
+                Button("Убрать…") { Task { await m.cascRemove() } }
+                Spacer()
+            }
+            Text(m.cascStatusText).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail).textSelection(.enabled)
+            HSplitView {
+                Table(m.cascRows) {
+                    TableColumn("") { r in Text("●").foregroundStyle(r.dot) }.width(16)
+                    TableColumn("Группа") { r in Text(r.name).bold() }.width(min: 60, ideal: 90)
+                    TableColumn("Нода") { r in Text(r.node) }.width(min: 80, ideal: 130)
+                    TableColumn("Задержка") { r in Text(r.delay) }.width(min: 70, ideal: 100)
+                }
+                .copyRows { m.cascRows.map { XuiCopy.row([$0.name, $0.node, $0.delay]) }.joined(separator: "\n") }
+                .frame(minWidth: 300)
+                ScrollView {
+                    Text(m.cascInfo)
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(8)
+                }
+                .frame(minWidth: 300)
+            }
+        }
+    }
+
     // MARK: лог
 
     private var logView: some View {
@@ -580,7 +648,7 @@ struct PickSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(req.title).font(.title3.bold())
             Text(req.text).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            TextField("Версия", text: $value).textFieldStyle(.roundedBorder)
+            TextField(req.field, text: $value).textFieldStyle(.roundedBorder)
             List(req.items, id: \.self, selection: $sel) { Text($0).tag($0) }
                 .frame(minHeight: 220)
                 .onChange(of: sel) { _, v in if let v { value = v } }

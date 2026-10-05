@@ -28,9 +28,11 @@ final class PickRequest: Identifiable {
     let items: [String]
     let selected: String?
     let ok: String
+    /// Подсказка в поле ввода над списком.
+    let field: String
     var done: ((String?) -> Void)?
-    init(title: String, text: String, items: [String], selected: String?, ok: String = "Выбрать") {
-        self.title = title; self.text = text; self.items = items; self.selected = selected; self.ok = ok
+    init(title: String, text: String, items: [String], selected: String?, ok: String = "Выбрать", field: String = "Версия") {
+        self.title = title; self.text = text; self.items = items; self.selected = selected; self.ok = ok; self.field = field
     }
 }
 

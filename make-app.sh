@@ -16,7 +16,7 @@ if [ -z "$SIGN_IDENTITY" ]; then
     SIGN_IDENTITY="${SIGN_IDENTITY:-QTerm Self-Signed}"
 fi
 BUILD_CONFIG="release"
-APP_VERSION="3.11.8"
+APP_VERSION="3.12.0"
 
 cd "$(dirname "$0")"
 mkdir -p build
@@ -25,6 +25,9 @@ mkdir -p build
 BUILDNUM_FILE="build/.buildnum"
 BUILD_NUM=$(( $(cat "$BUILDNUM_FILE" 2>/dev/null || echo 0) + 1 ))
 echo "$BUILD_NUM" > "$BUILDNUM_FILE"
+
+# скрипт каскада (scripts/vpn-cascade.sh) — вшить в сборку, если менялся
+bash scripts/gen-mac-embed.sh
 
 echo "==> swift build ($BUILD_CONFIG) — билд #$BUILD_NUM"
 swift build -c "$BUILD_CONFIG"

@@ -113,6 +113,7 @@ struct ConnectResult {
 final class XuiModel: ObservableObject {
     enum Seg: String, CaseIterable, Identifiable {
         case monitor = "Монитор", clients = "Клиенты", nodes = "Узлы", names = "Ревизия имён", awg = "AWG", updates = "Обновления"
+        case cascade = "Каскад"
         var id: String { rawValue }
     }
 
@@ -125,6 +126,7 @@ final class XuiModel: ObservableObject {
         didSet {
             if seg == .awg && oldValue != .awg { Task { await refreshAwg() } }
             if seg == .updates && oldValue != .updates { Task { await refreshUpdates() } }
+            if seg == .cascade && oldValue != .cascade { cascLoad(); Task { await refreshCascade() } }
         }
     }
     @Published var status = ""
@@ -168,6 +170,25 @@ final class XuiModel: ObservableObject {
     var updBusy = false
     /// Команда в SSH-терминал ноды QTerm (ставит окно — из AppState).
     var runInTerminal: ((UUID, String) async -> Bool)?
+
+    // каскад (qcascade на сервере)
+    /// exec по SSH-сессии: (id сессии, команда, таймаут с) → stdout. Ставит окно — из AppState.
+    var execInSession: ((UUID, String, Int) async throws -> String)?
+    /// Живое ли соединение сессии — автообновление не открывает вкладки само.
+    var sessionConnected: ((UUID) -> Bool)?
+    @Published var cascades: [CascadeServer] = []
+    @Published var cascId: String = "" { didSet { if oldValue != cascId && !cascLoading { cascChanged() } } }
+    @Published var cascStatus: JObj?
+    @Published var cascVersion: String?
+    @Published var cascStatusText = ""
+    @Published var cascRows: [CascRow] = []
+    @Published var cascInfo = ""
+    var cascBusy = false
+    var cascRefreshing = false
+    var cascLoading = false
+    var cascRemotes: [String: CascadeRemote] = [:]
+    @Published var textEditRequest: TextEditRequest?
+    @Published var checkRequest: CheckRequest?
 
     // листы
     @Published var pickRequest: PickRequest?
@@ -263,6 +284,7 @@ final class XuiModel: ObservableObject {
     func tick() async {
         guard !busy else { return }
         if seg == .awg { await refreshAwg(quiet: true) }
+        else if seg == .cascade { await cascTick() }
         else if seg != .names && seg != .updates { await refresh(quiet: true) }
     }
 

@@ -1153,6 +1153,38 @@ final class AppState: ObservableObject {
         return true
     }
 
+    /// Живое ли SSH-соединение сессии.
+    func sessionConnected(_ sessionID: UUID) -> Bool { connections[sessionID]?.status == .connected }
+
+    /// Команда отдельным exec-каналом поверх соединения ноды (терминал не трогается).
+    /// Нода не подключена — открываем её вкладку (вход, ключи, TOFU — как обычно) и ждём подключения.
+    func execInSession(_ sessionID: UUID, _ command: String, timeout: Int) async throws -> String {
+        guard let s = sessions.first(where: { $0.id == sessionID && $0.deleted != true }) else {
+            throw XuiError("SSH-сессия сервера не найдена (удалена?)")
+        }
+        if connections[sessionID]?.status != .connected {
+            _ = openTab(for: s)
+            for _ in 0..<120 {
+                if connections[sessionID]?.status == .connected { break }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        guard let conn = connections[sessionID], conn.status == .connected else {
+            throw XuiError("«\(s.name)» не подключилась по SSH")
+        }
+        let name = s.name
+        return try await withThrowingTaskGroup(of: String.self) { g in
+            g.addTask { try await conn.exec(command) }
+            g.addTask {
+                try await Task.sleep(nanoseconds: UInt64(max(1, timeout)) * 1_000_000_000)
+                throw XuiError("«\(name)»: команда не уложилась в \(timeout) с")
+            }
+            defer { g.cancelAll() }
+            guard let r = try await g.next() else { throw XuiError("«\(name)»: exec без ответа") }
+            return r
+        }
+    }
+
     /// Вернуть фокус терминалу активной вкладки (после шитов/окон).
     func focusActiveTerminal() {
         guard let tab = activeTab, let tv = anyTerminal(for: tab) else { return }

@@ -359,6 +359,34 @@ final class XuiStore {
         put(Self.namesKey, Self.encode(c))
     }
 
+    // MARK: каскад-серверы (qcascade)
+
+    static let cascadePrefix = "xui.cascade:"
+
+    func cascades() -> [CascadeServer] {
+        var list: [CascadeServer] = []
+        for (k, v) in secrets() where k.hasPrefix(Self.cascadePrefix) {
+            guard let c = try? JSONDecoder().decode(CascadeServer.self, from: Data(v.utf8)), c.deleted != true else { continue }
+            list.append(c)
+        }
+        return list.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    func saveCascade(_ cascade: CascadeServer) {
+        var c = cascade
+        c.updatedAt = xuiNowISO()
+        c.deleted = nil
+        put(Self.cascadePrefix + c.key, Self.encode(c))
+    }
+
+    func deleteCascade(_ id: String) {
+        var stub = CascadeServer()
+        stub.id = id
+        stub.deleted = true
+        stub.updatedAt = xuiNowISO()
+        put(Self.cascadePrefix + stub.key, Self.encode(stub))
+    }
+
     // MARK: синк: записи xui.* — LWW по встроенному updatedAt (остальные секреты — локальный приоритет)
 
     nonisolated static func isLww(_ key: String) -> Bool { key.hasPrefix("xui.") }
