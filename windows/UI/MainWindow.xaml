@@ -94,14 +94,13 @@
                 </DockPanel>
             </Border>
 
-            <!-- Вкладки — одной строкой с прокруткой (колесо мыши) и списком «▾»; кнопки — своей колонкой справа -->
+            <!-- Вкладки — все на виду, переносятся строками на всю ширину; кнопки — отдельной строкой под ними -->
             <Grid Grid.Row="0" Margin="6,6,6,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top" Margin="8,0,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,4">
                     <Button x:Name="BroadcastButton" Content="Во все"
                             Click="Broadcast_Click" Margin="0,0,4,0"
                             ToolTip="Сквозной ввод: клавиатура летит во все терминалы. ОСТОРОЖНО со стрелками/Tab — каждая нода подставит СВОЮ историю. Одинаковое везде — набор, вставка или сниппет из «Команд»"/>
@@ -111,25 +110,20 @@
                     <Button x:Name="SnippetsButton" Content="Команды" Click="SnippetsButton_Click" Margin="0,0,4,0"/>
                     <Button x:Name="FilesButton" Content="Файлы" Click="FilesButton_Click"/>
                 </StackPanel>
-                <Button x:Name="TabListButton" Grid.Column="1" Content="▾" Click="TabList_Click" MinWidth="28"
-                        Margin="4,0,0,0" VerticalAlignment="Top" ToolTip="Все вкладки списком" Visibility="Collapsed"/>
-                <ScrollViewer x:Name="TabScroll" Grid.Column="0" HorizontalScrollBarVisibility="Hidden"
-                              VerticalScrollBarVisibility="Disabled" PreviewMouseWheel="TabScroll_Wheel"
-                              SizeChanged="TabScroll_SizeChanged">
-                <ItemsControl x:Name="TabStrip">
+                <ItemsControl x:Name="TabStrip" Grid.Row="0">
                 <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                    <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
                         <Border Background="{Binding TabBrush}" CornerRadius="6,6,0,0"
                                 BorderBrush="{DynamicResource BorderDim}" BorderThickness="1,1,1,0"
-                                Margin="0,0,4,0" Padding="10,5"
+                                Margin="0,0,4,4" Padding="10,5"
                                 MouseLeftButtonDown="Tab_Click" MouseRightButtonUp="Tab_RightClick" Tag="{Binding Id}">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="●" Foreground="{Binding DotBrush}" Margin="0,0,6,0"/>
-                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource FgBrush}"
-                                           MaxWidth="150" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"/>
+                                <TextBlock Text="{Binding Label}" Foreground="{DynamicResource FgBrush}"
+                                           MaxWidth="170" TextTrimming="CharacterEllipsis" ToolTip="{Binding Label}"/>
                                 <TextBlock Text="✕" Margin="10,0,0,0"
                                            Foreground="{DynamicResource DimBrush}"
                                            MouseLeftButtonDown="TabClose_Click" Tag="{Binding Id}"/>
@@ -138,7 +132,6 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                </ScrollViewer>
             </Grid>
 
             <Border Grid.Row="2" Margin="6,0,6,0"

@@ -45,7 +45,12 @@ public partial class MainWindow : Window
         public TabKind Kind { get; init; }
 
         private string _name = "";
-        public string Name { get => _name; set { _name = value; N(); } }
+        public string Name { get => _name; set { _name = value; N(); N(nameof(Label)); } }
+
+        private string _suffix = "";
+        /// <summary>« ·2» у второй и следующих вкладок одной ноды.</summary>
+        public string Suffix { get => _suffix; set { if (_suffix == value) return; _suffix = value; N(nameof(Label)); } }
+        public string Label => _name + _suffix;
 
         private Brush _dot = Brushes.Orange;
         public Brush DotBrush { get => _dot; set { _dot = value; N(); } }
@@ -68,7 +73,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         Title = BuildTitle();
         TabStrip.ItemsSource = _tabs;
-        _tabs.CollectionChanged += (_, _) => Dispatcher.InvokeAsync(UpdateTabOverflow, System.Windows.Threading.DispatcherPriority.Loaded);
+        _tabs.CollectionChanged += (_, _) => RenumberTabs();
         Closing += (_, _) => { if (FilesCol.Width.Value > 0) RememberFilesWidth(); };
         _repo.Changed += () => RunOnUi(RefreshList);
         try { _repo.LoadOrInit(); }
@@ -625,7 +630,6 @@ public partial class MainWindow : Window
         if (vm is null) return;
         _activeTab = id;
         foreach (var t in _tabs) t.IsActive = t.Id == id;
-        ScrollTabIntoView(id);
         Placeholder.Visibility = Visibility.Collapsed;
 
         Web.Visibility = Visibility.Visible;
@@ -637,46 +641,17 @@ public partial class MainWindow : Window
         if (FilesCol.Width.Value > 0) RenderFilesOrProgress();
     }
 
-    // ── полоса вкладок: одна строка, колесо — прокрутка, «▾» — список ──
+    // ── полоса вкладок: все вкладки на виду; одинаковые ноды — с номером ──
 
-    private void TabScroll_Wheel(object sender, MouseWheelEventArgs e)
+    /// <summary>Несколько вкладок одной ноды — «имя ·1», «имя ·2», чтобы различать с первого взгляда.</summary>
+    private void RenumberTabs()
     {
-        TabScroll.ScrollToHorizontalOffset(TabScroll.HorizontalOffset - e.Delta);
-        e.Handled = true;
-    }
-
-    private void TabScroll_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateTabOverflow();
-
-    /// <summary>«▾» — только когда вкладки не влезают.</summary>
-    private void UpdateTabOverflow()
-    {
-        TabScroll.UpdateLayout();
-        TabListButton.Visibility = TabScroll.ExtentWidth > TabScroll.ViewportWidth + 1 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void TabList_Click(object sender, RoutedEventArgs e)
-    {
-        var menu = new ContextMenu { PlacementTarget = TabListButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
-        foreach (var t in _tabs)
+        foreach (var g in _tabs.GroupBy(t => t.Name))
         {
-            var id = t.Id;
-            var item = new MenuItem { Header = t.Name, IsChecked = t.Id == _activeTab };
-            item.Click += (_, _) => ActivateTab(id);
-            menu.Items.Add(item);
+            var i = 0;
+            var many = g.Count() > 1;
+            foreach (var t in g) t.Suffix = many ? $" ·{++i}" : "";
         }
-        menu.IsOpen = true;
-    }
-
-    /// <summary>Активная вкладка — в видимую часть полосы.</summary>
-    private void ScrollTabIntoView(Guid id)
-    {
-        Dispatcher.InvokeAsync(() =>
-        {
-            UpdateTabOverflow();
-            var vm = _tabs.FirstOrDefault(t => t.Id == id);
-            if (vm is null) return;
-            if (TabStrip.ItemContainerGenerator.ContainerFromItem(vm) is FrameworkElement fe) fe.BringIntoView();
-        }, System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     private void FilesSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e) =>
