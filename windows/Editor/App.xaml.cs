@@ -59,6 +59,8 @@ public partial class App : Application
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         link.Start();
         win.Show();
+        // проводник: «Открыть в QEditor», «Открыть с помощью», файлы без расширения (authorized_keys…)
+        Task.Run(ShellAssoc.Ensure);
         // «Открыть с помощью» / перетаскивание на exe — эти файлы; руками — чистый
         // скрапбук; из QTerm — ждём open по каналу
         foreach (var f in files) win.OpenLocalFile(f);

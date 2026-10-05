@@ -115,8 +115,6 @@ public partial class XuiWindow : Window
                 await RefreshAsync(quiet: true);
             else if (IsVisible && WindowState != WindowState.Minimized && !_busy && _seg == "awg")
                 await RefreshAwgAsync(quiet: true);
-            else if (IsVisible && WindowState != WindowState.Minimized && _seg == "cascade")
-                await CascTickAsync();
         };
         Loaded += (_, _) => _timer.Start();
         XuiReauth.Notice += OnReauthNotice;
@@ -149,7 +147,7 @@ public partial class XuiWindow : Window
         var pick = masters.FirstOrDefault(p => p.Id == (_masterPanel?.Id ?? _lastMaster)) ?? masters.FirstOrDefault();
         MasterBox.SelectedItem = pick;
         _noMaster = masters.Count == 0;
-        SetupView.Visibility = _noMaster && _seg is not ("awg" or "updates" or "cascade") ? Visibility.Visible : Visibility.Collapsed;
+        SetupView.Visibility = _noMaster && _seg is not ("awg" or "updates") ? Visibility.Visible : Visibility.Collapsed;
         if (masters.Count == 0)
         {
             Status("Нет главной панели");
@@ -257,15 +255,18 @@ public partial class XuiWindow : Window
         NamesView.Visibility = s == "names" ? Visibility.Visible : Visibility.Collapsed;
         AwgView.Visibility = s == "awg" ? Visibility.Visible : Visibility.Collapsed;
         UpdatesView.Visibility = s == "updates" ? Visibility.Visible : Visibility.Collapsed;
-        CascadeView.Visibility = s == "cascade" ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var b in new[] { SegMonitor, SegClients, SegNodes, SegNames, SegAwg, SegUpdates, SegCascade })
+        foreach (var b in new[] { SegMonitor, SegClients, SegNodes, SegNames, SegAwg, SegUpdates })
             b.SetResourceReference(BackgroundProperty, (string)b.Tag == s ? "SelBrush" : "Panel2Brush");
-        // AWG, обновления и каскад живут без главной 3x-ui — карточку первой настройки там не показываем
-        SetupView.Visibility = _noMaster && s is not ("awg" or "updates" or "cascade") ? Visibility.Visible : Visibility.Collapsed;
+        // AWG и обновления живут без главной 3x-ui — карточку первой настройки там не показываем
+        SetupView.Visibility = _noMaster && s is not ("awg" or "updates") ? Visibility.Visible : Visibility.Collapsed;
         if (s == "awg" && IsLoaded) _ = RefreshAwgAsync();
         if (s == "updates" && IsLoaded) _ = RefreshUpdatesAsync();
-        if (s == "cascade") ShowCascade();
     }
+
+    /// <summary>Открыть окно «Каскад» (задаёт главное окно — одно на QTerm).</summary>
+    public Action? OpenCascade { get; set; }
+
+    private void Cascade_Click(object sender, RoutedEventArgs e) => OpenCascade?.Invoke();
 
     // ── форматирование ──
 

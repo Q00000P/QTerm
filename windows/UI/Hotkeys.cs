@@ -72,6 +72,7 @@ public static class Hotkeys
             new("sync", "Синк", ""),
             new("qeditor", "QEditor (скрапбук)", ""),
             new("xui", "Ноды 3x-ui", ""),
+            new("cascade", "Каскад", ""),
             new("nodeadd", "Нода из выделения (итог установщика 3x-ui / AWG)", "Ctrl+Shift+KeyA"),
             new("hotkeys", "Горячие клавиши…", ""),
         });

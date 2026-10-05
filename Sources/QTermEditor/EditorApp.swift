@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AppKit
+import CoreServices
 import CodeEditSourceEditor
 import CodeEditLanguages
 
@@ -352,6 +353,8 @@ final class EditorAppState: ObservableObject {
             Task { @MainActor in self?.handle(message) }
         }
         EditorIPC.send(.init(kind: .ready), to: EditorIPC.toHost)
+        // файлы из Finder («Открыть в программе», перетаскивание на иконку), пришедшие до появления состояния
+        EditorAppDelegate.attach(self)
     }
 
     var activeDocument: EditorDocument? {
@@ -1025,20 +1028,52 @@ struct DiffResult: Identifiable {
 
 // MARK: - Приложение и меню (порядок MobaTextEditor)
 
+/// Finder: «Открыть в программе → QTerm Editor», двойной щелчок по закреплённым файлам, перетаскивание
+/// на иконку в доке — любые файлы, в т.ч. без расширения (authorized_keys, config, known_hosts…).
+final class EditorAppDelegate: NSObject, NSApplicationDelegate {
+    @MainActor private static weak var editor: EditorAppState?
+    @MainActor private static var pending: [URL] = []
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        Task { @MainActor in Self.deliver(urls) }
+    }
+
+    @MainActor static func deliver(_ urls: [URL]) {
+        let files = urls.filter { $0.isFileURL }
+        guard !files.isEmpty else { return }
+        guard let ed = editor else { pending.append(contentsOf: files); return }
+        for url in files { ed.openLocal(url) }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @MainActor static func attach(_ ed: EditorAppState) {
+        editor = ed
+        let early = pending
+        pending = []
+        if !early.isEmpty { Task { @MainActor in deliver(early) } }
+    }
+}
+
 @main
 struct QTermEditorApp: App {
+    @NSApplicationDelegateAdaptor(EditorAppDelegate.self) private var appDelegate
     @StateObject private var editor = EditorAppState()
 
     init() {
         // macOS 27 + русская локаль: NSAlert с SF Symbols падает, если
         // числовая локаль процесса с запятой. Держим «C».
         setlocale(LC_NUMERIC, "C")
+        // типы документов (любой файл, в т.ч. без расширения) — в LaunchServices, чтобы Finder предлагал редактор
+        _ = LSRegisterURL(Bundle.main.bundleURL as CFURL, true)
     }
 
     var body: some Scene {
         WindowGroup("Редактор — QTerm") {
             EditorRootView(editor: editor, settings: editor.settings)
                 .frame(minWidth: 720, minHeight: 440)
+                // файл из Finder открывается вкладкой в этом окне, а не новым окном
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
+                .onOpenURL { url in EditorAppDelegate.deliver([url]) }
         }
         .defaultSize(width: 980, height: 660)
         .commands { EditorCommands(editor: editor, settings: editor.settings) }

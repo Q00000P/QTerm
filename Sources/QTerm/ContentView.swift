@@ -55,7 +55,7 @@ struct ContentView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            // Локальный терминал мака и «Ноды 3x-ui» — пополам, прибиты НАД списком, не скроллятся.
+            // Локальный терминал мака, «Ноды 3x-ui» и «Каскад» — в ряд, прибиты НАД списком, не скроллятся.
             HStack(spacing: 0) {
                 Button {
                     state.focusOrOpenLocalTab()
@@ -109,6 +109,30 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
                 .help("Ноды 3x-ui: монитор, клиенты, узлы, AWG, обновления")
+
+                Divider().frame(height: 30)
+
+                Button {
+                    openWindow(id: "cascade")
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .foregroundStyle(.orange)
+                            .frame(width: 14)
+                        VStack(alignment: .leading) {
+                            Text("Каскад").fontWeight(.semibold)
+                            Text("mihomo")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .help("Каскад-серверы: mihomo с правилами как на Кинетиках — источники нод, кто идёт в каскад, группы, правила")
             }
 
             Divider()

@@ -1,0 +1,329 @@
+<Window x:Class="QTermWin.UI.CascadeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Каскад" Width="1220" Height="780" MinWidth="900" MinHeight="560"
+        Background="{DynamicResource BgBrush}" Foreground="{DynamicResource FgBrush}"
+        WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <Style x:Key="Seg" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="Padding" Value="14,6"/>
+            <Setter Property="MinWidth" Value="100"/>
+        </Style>
+        <Style x:Key="Dim" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+        <Style x:Key="Head" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+        </Style>
+        <!-- выделяемый текст статуса (TextBlock не выделяется) -->
+        <Style x:Key="DimSel" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Foreground" Value="{DynamicResource DimBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+        <Style x:Key="Grid" TargetType="ListView">
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style x:Key="Mono" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="TextWrapping" Value="NoWrap"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="Padding" Value="6"/>
+        </Style>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource PanelBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderDim}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="14,12"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="Margin" Value="0,3,0,3"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource FgBrush}"/>
+            <Setter Property="Margin" Value="0,3,16,3"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="240" MinWidth="180" MaxWidth="420"/>
+            <ColumnDefinition Width="8"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="150" MinHeight="60"/>
+        </Grid.RowDefinitions>
+
+        <!-- ── Каскад-серверы ── -->
+        <DockPanel Grid.Column="0" Grid.Row="0">
+            <TextBlock DockPanel.Dock="Top" Text="Каскад-серверы" Style="{StaticResource Head}"/>
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
+                <Button Content="＋ Сервер…" Click="ServerAdd_Click"
+                        ToolTip="SSH-сессия QTerm сервера, который станет каскадом (на нём — 3x-ui, AWG-панель, MTProto)"/>
+                <Button Content="Убрать…" Click="ServerRemove_Click" Margin="6,0,0,0"
+                        ToolTip="Снять каскад с сервера (перехват снимается первым) или только убрать сервер из списка"/>
+            </StackPanel>
+            <ListBox x:Name="ServerList" SelectionChanged="ServerList_Changed"
+                     Background="{DynamicResource PanelBrush}" Foreground="{DynamicResource FgBrush}"
+                     BorderBrush="{DynamicResource BorderDim}" BorderThickness="1"
+                     HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Margin="4,4">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="●" Foreground="{Binding Dot}" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"/>
+                            </StackPanel>
+                            <TextBlock Text="{Binding Sub}" FontSize="11.5" Foreground="{DynamicResource DimBrush}"
+                                       TextTrimming="CharacterEllipsis" Margin="17,2,0,0"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </DockPanel>
+
+        <GridSplitter Grid.Column="1" Grid.Row="0" HorizontalAlignment="Stretch" Background="Transparent"/>
+
+        <!-- ── Сервер ── -->
+        <DockPanel Grid.Column="2" Grid.Row="0">
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                <TextBlock x:Name="HeadName" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <Button x:Name="ApplyBtn" DockPanel.Dock="Right" Content="Применить" Click="Apply_Click" MinWidth="120"
+                        ToolTip="Пересобрать конфиг mihomo по источникам, группам и правилам: проверка → рестарт → откат при сбое"/>
+                <Button DockPanel.Dock="Right" Content="Обновить" Click="Refresh_Click" Margin="0,0,6,0" ToolTip="Опросить сервер (F5)"/>
+                <Button x:Name="InstallBtn" DockPanel.Dock="Right" Content="Установить…" Click="Install_Click" Margin="0,0,6,0"
+                        ToolTip="Скрипт встроен в QTerm и заливается сам. Установка идёт на сервере в фоне и переживает обрыв SSH"/>
+                <TextBox x:Name="HeadStatus" Style="{StaticResource DimSel}"/>
+            </DockPanel>
+
+            <StackPanel x:Name="SegBar" DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                <Button x:Name="SegOverview" Style="{StaticResource Seg}" Content="Обзор" Tag="overview" Click="Seg_Click"/>
+                <Button x:Name="SegSources" Style="{StaticResource Seg}" Content="Источники нод" Tag="sources" Click="Seg_Click"
+                        ToolTip="Откуда каскад берёт ноды: свои клиенты на панелях 3x-ui, ссылки подписок, WireGuard/AWG; резерв"/>
+                <Button x:Name="SegWho" Style="{StaticResource Seg}" Content="Кто идёт в каскад" Tag="who" Click="Seg_Click"
+                        ToolTip="Клиенты 3x-ui, AWG-панели и MTProto-прокси этого сервера"/>
+                <Button x:Name="SegGroups" Style="{StaticResource Seg}" Content="Группы" Tag="groups" Click="Seg_Click"/>
+                <Button x:Name="SegRules" Style="{StaticResource Seg}" Content="Правила" Tag="rules" Click="Seg_Click"/>
+                <Button x:Name="SegJournal" Style="{StaticResource Seg}" Content="Журнал" Tag="journal" Click="Seg_Click"
+                        ToolTip="journalctl -u qcascade"/>
+            </StackPanel>
+
+            <Grid>
+                <!-- ── Обзор ── -->
+                <Grid x:Name="OverviewView">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MinWidth="300"/>
+                        <ColumnDefinition Width="6"/>
+                        <ColumnDefinition Width="*" MinWidth="300"/>
+                    </Grid.ColumnDefinitions>
+                    <DockPanel Grid.Column="0">
+                        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                            <Button Content="Ядро mihomo…" Click="Core_Click" Margin="0,0,6,4"
+                                    ToolTip="Последний стоковый MetaCubeX или своя сборка по ссылке (ff148). С проверкой и откатом"/>
+                            <Button Content="Ссылка на панель mihomo" Click="Dashboard_Click" Margin="0,0,6,4"
+                                    ToolTip="zashboard через SSH-туннель: команда туннеля и secret — в буфер"/>
+                        </WrapPanel>
+                        <ListView x:Name="GroupList" Style="{StaticResource Grid}">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Header="" Width="30">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate><TextBlock Text="●" Foreground="{Binding Dot}"/></DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Группа" Width="110" DisplayMemberBinding="{Binding Name}"/>
+                                    <GridViewColumn Header="Сейчас" Width="160" DisplayMemberBinding="{Binding Node}"/>
+                                    <GridViewColumn Header="Задержка" Width="120" DisplayMemberBinding="{Binding Delay}"/>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+                    </DockPanel>
+                    <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="Transparent"/>
+                    <TextBox x:Name="InfoBox" Grid.Column="2" Style="{StaticResource Mono}" TextWrapping="Wrap"/>
+                </Grid>
+
+                <!-- ── Источники нод ── -->
+                <DockPanel x:Name="SourcesView" Visibility="Collapsed">
+                    <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                        <Button Content="＋ Клиент на панели 3x-ui…" Click="SrcAddXui_Click" Margin="0,0,6,4"
+                                ToolTip="Свой клиент каскада на любой панели (главной или ноде) с нужным набором инбаундов — его Clash-подписка станет источником. Единая подписка клиентов не трогается"/>
+                        <Button Content="＋ Ссылка подписки…" Click="SrcAddLink_Click" Margin="0,0,6,4"
+                                ToolTip="Любая Clash/Mihomo-ссылка — например, подписка отдельной ноды"/>
+                        <Button Content="＋ WireGuard / AWG…" Click="SrcAddWg_Click" Margin="0,0,6,4"
+                                ToolTip="Клиент AWG-панели другой ноды или .conf: выход WireGuard/AmneziaWG; можно сделать резервом"/>
+                        <Button Content="Изменить…" Click="SrcEdit_Click" Margin="12,0,6,4"/>
+                        <Button Content="Вкл / выкл" Click="SrcToggle_Click" Margin="0,0,6,4"/>
+                        <Button Content="Удалить…" Click="SrcDelete_Click" Margin="0,0,6,4"/>
+                    </WrapPanel>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <TextBlock Text="Резерв:" Style="{StaticResource Dim}" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="ReserveBox" Width="220" SelectionChanged="Reserve_Changed" VerticalAlignment="Center"
+                                  ToolTip="Когда все ноды группы недоступны, всё, что не DIRECT, уходит сюда (обычно WireGuard)"/>
+                        <TextBlock Style="{StaticResource Dim}" Margin="10,0,0,0"
+                                   Text="все ноды группы недоступны → трафик группы идёт через резерв; DIRECT не трогается"/>
+                    </DockPanel>
+                    <TextBlock x:Name="SrcHint" DockPanel.Dock="Bottom" Style="{StaticResource Dim}" Margin="0,8,0,0"
+                               Text="Источники пишутся на сервер сразу; в работу идут по «Применить» (или сами — таймер сверяет раз в час). Одинаковые имена нод из разных источников — задай префикс."/>
+                    <ListView x:Name="SourceList" Style="{StaticResource Grid}" MouseDoubleClick="SrcEdit_Click">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="" Width="30">
+                                    <GridViewColumn.CellTemplate>
+                                        <DataTemplate><TextBlock Text="●" Foreground="{Binding Dot}"/></DataTemplate>
+                                    </GridViewColumn.CellTemplate>
+                                </GridViewColumn>
+                                <GridViewColumn Header="Источник" Width="130" DisplayMemberBinding="{Binding Name}"/>
+                                <GridViewColumn Header="Тип" Width="110" DisplayMemberBinding="{Binding TypeText}"/>
+                                <GridViewColumn Header="Откуда" Width="330" DisplayMemberBinding="{Binding Origin}"/>
+                                <GridViewColumn Header="Префикс" Width="80" DisplayMemberBinding="{Binding Prefix}"/>
+                                <GridViewColumn Header="Нод" Width="60" DisplayMemberBinding="{Binding Nodes}"/>
+                                <GridViewColumn Header="Состояние" Width="300" DisplayMemberBinding="{Binding State}"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                </DockPanel>
+
+                <!-- ── Кто идёт в каскад ── -->
+                <ScrollViewer x:Name="WhoView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,0,6,0">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Применить к 3x-ui" Click="WhoXray_Click"
+                                            ToolTip="3x-ui перезапустится — клиенты переподключатся. При сбое шаблон Xray откатывается"/>
+                                    <TextBlock Text="Клиенты 3x-ui (VLESS, Hysteria, встроенный AWG)" Style="{StaticResource Head}"/>
+                                </DockPanel>
+                                <TextBlock x:Name="XrayState" Style="{StaticResource Dim}" Margin="0,0,0,6"/>
+                                <WrapPanel x:Name="XrayModes">
+                                    <RadioButton x:Name="XrayAll" Content="все" GroupName="xray" Checked="XrayMode_Changed"/>
+                                    <RadioButton x:Name="XrayInb" Content="выбранные инбаунды" GroupName="xray" Checked="XrayMode_Changed"/>
+                                    <RadioButton x:Name="XrayUsers" Content="выбранные клиенты" GroupName="xray" Checked="XrayMode_Changed"/>
+                                    <RadioButton x:Name="XrayOff" Content="никто" GroupName="xray" Checked="XrayMode_Changed"/>
+                                </WrapPanel>
+                                <WrapPanel x:Name="XrayChecks" Margin="20,4,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="Клиенты AWG-панели этого сервера (WireGuard / AmneziaWG)" Style="{StaticResource Head}"/>
+                                <TextBlock x:Name="AwgState" Style="{StaticResource Dim}" Margin="0,0,0,6"/>
+                                <WrapPanel>
+                                    <RadioButton x:Name="AwgAll" Content="все интерфейсы wg* / awg*" GroupName="awg" Checked="AwgMode_Changed"/>
+                                    <RadioButton x:Name="AwgList" Content="выбранные интерфейсы" GroupName="awg" Checked="AwgMode_Changed"/>
+                                    <RadioButton x:Name="AwgOff" Content="никто" GroupName="awg" Checked="AwgMode_Changed"/>
+                                </WrapPanel>
+                                <WrapPanel x:Name="AwgChecks" Margin="20,4,0,0"/>
+                                <DockPanel Margin="0,8,0,0">
+                                    <TextBlock Text="Только адреса клиентов:" Style="{StaticResource Dim}" Margin="0,0,8,0"/>
+                                    <TextBox x:Name="AwgSrcBox" Padding="6"
+                                             ToolTip="IPv4-адреса или подсети клиентов через пробел (10.8.0.2 10.8.0.0/28). Пусто — все клиенты"/>
+                                </DockPanel>
+                                <TextBlock Style="{StaticResource Dim}" Margin="0,6,0,0"
+                                           Text="TCP и UDP клиентов во внешний мир → mihomo (локальные сети — мимо). IPv6 клиентов через каскад не идёт — отказ, приложения уходят на IPv4."/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="MTProto-прокси этого сервера (Telegram)" Style="{StaticResource Head}"/>
+                                <CheckBox x:Name="MtpBox" Content="трафик к Telegram — через каскад, по правилам (группа TG)"/>
+                                <TextBlock x:Name="MtpState" Style="{StaticResource Dim}" Margin="0,4,0,6"/>
+                                <DockPanel>
+                                    <TextBlock Text="Пользователи процессов:" Style="{StaticResource Dim}" Margin="0,0,8,0"/>
+                                    <TextBox x:Name="MtpUsersBox" Padding="6"
+                                             ToolTip="Системные пользователи MTProto-процессов вне докера: telemt, mtproxy (WEB). mtg и teleproxy в докере ловятся сами"/>
+                                </DockPanel>
+                                <TextBlock Style="{StaticResource Dim}" Margin="0,6,0,0"
+                                           Text="mtg и teleproxy (docker) — по мосту докера, telemt и WEB (mtproto-proxy) — по пользователю процесса. Перехватываются только подключения к подсетям Telegram."/>
+                            </StackPanel>
+                        </Border>
+                        <DockPanel Margin="0,0,0,10">
+                            <Button DockPanel.Dock="Right" Content="Применить AWG и MTProto" Click="WhoNf_Click"
+                                    ToolTip="Сохранить и применить: mihomo перезапустится, правила перехвата встанут заново"/>
+                            <TextBlock Style="{StaticResource Dim}" Text="Пустой перехват (никто) — сервер работает как без каскада."/>
+                        </DockPanel>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- ── Группы ── -->
+                <DockPanel x:Name="GroupsView" Visibility="Collapsed">
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <TextBlock Text="DIRECT →" Style="{StaticResource Dim}" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="DirectBox" Width="200" SelectionChanged="Direct_Changed" VerticalAlignment="Center"
+                                  ToolTip="Куда идёт DIRECT из правил (ru-трафик, MATCH): напрямую с сервера или через группу (MSK)"/>
+                        <Button DockPanel.Dock="Right" Content="Сохранить и применить" Click="GroupsSave_Click"/>
+                        <Button DockPanel.Dock="Right" Content="Вернуть" Click="GroupsReload_Click" Margin="0,0,6,0"/>
+                        <TextBlock Style="{StaticResource Dim}" Margin="12,0,12,0"
+                                   Text="ИМЯ ТИП ИНТЕРВАЛ УЧАСТНИКИ… — как на Кинетиках; группа на каждую ноду создаётся сама"/>
+                    </DockPanel>
+                    <TextBox x:Name="GroupsBox" Style="{StaticResource Mono}" IsReadOnly="False" AcceptsReturn="True" AcceptsTab="True"/>
+                </DockPanel>
+
+                <!-- ── Правила ── -->
+                <DockPanel x:Name="RulesView" Visibility="Collapsed">
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <Button DockPanel.Dock="Right" Content="Сохранить и применить" Click="RulesSave_Click"/>
+                        <Button DockPanel.Dock="Right" Content="Вернуть" Click="RulesReload_Click" Margin="0,0,6,0"/>
+                        <TextBlock Style="{StaticResource Dim}" Margin="0,0,12,0"
+                                   Text="rule-providers и rules — формат config.yaml Кинетика (пути /opt/etc/mihomo/… переписываются сами). Конфиг с ошибкой не встанет — работает прежний"/>
+                    </DockPanel>
+                    <TextBox x:Name="RulesBox" Style="{StaticResource Mono}" IsReadOnly="False" AcceptsReturn="True" AcceptsTab="True"/>
+                </DockPanel>
+
+                <!-- ── Журнал ── -->
+                <DockPanel x:Name="JournalView" Visibility="Collapsed">
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                        <Button Content="Обновить журнал" Click="JournalRefresh_Click"/>
+                        <TextBlock Text="journalctl -u qcascade — последние 300 строк" Style="{StaticResource Dim}" Margin="12,0,0,0"/>
+                    </StackPanel>
+                    <TextBox x:Name="JournalBox" Style="{StaticResource Mono}"/>
+                </DockPanel>
+
+                <!-- ── Не установлен / старая версия / нет серверов ── -->
+                <Border x:Name="CardView" Background="{DynamicResource BgBrush}" Visibility="Collapsed">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <Border HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,8,0,8" Width="680"
+                                Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock x:Name="CardTitle" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                <TextBox x:Name="CardText" Style="{StaticResource DimSel}" Margin="0,10,0,0"
+                                         Foreground="{DynamicResource FgBrush}"/>
+                                <Button x:Name="CardBtn" Content="Установить…" Click="CardBtn_Click" HorizontalAlignment="Left"
+                                        Margin="0,14,0,0" MinWidth="160"/>
+                            </StackPanel>
+                        </Border>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+        </DockPanel>
+
+        <GridSplitter Grid.Row="1" Grid.ColumnSpan="3" HorizontalAlignment="Stretch" Background="Transparent"/>
+        <TextBox x:Name="LogBox" Grid.Row="2" Grid.ColumnSpan="3" Style="{StaticResource Mono}"/>
+    </Grid>
+</Window>

@@ -86,6 +86,7 @@ final class Hotkeys: ObservableObject {
             HotkeyAction(id: "sync", title: "Синхронизировать сейчас", defaultGesture: ""),
             HotkeyAction(id: "qeditor", title: "Редактор (QTerm Editor)", defaultGesture: "Shift+Cmd+KeyE"),
             HotkeyAction(id: "xui", title: "Ноды 3x-ui", defaultGesture: ""),
+            HotkeyAction(id: "cascade", title: "Каскад", defaultGesture: ""),
             HotkeyAction(id: "nodeadd", title: "Нода из выделения (итог установщика 3x-ui / AWG)", defaultGesture: "Shift+Cmd+KeyA"),
             HotkeyAction(id: "hotkeys", title: "Горячие клавиши…", defaultGesture: ""),
         ]

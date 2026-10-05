@@ -16,7 +16,7 @@ if [ -z "$SIGN_IDENTITY" ]; then
     SIGN_IDENTITY="${SIGN_IDENTITY:-QTerm Self-Signed}"
 fi
 BUILD_CONFIG="release"
-APP_VERSION="3.12.0"
+APP_VERSION="3.13.0"
 
 cd "$(dirname "$0")"
 mkdir -p build
@@ -126,10 +126,35 @@ if [ -f "$EDITOR_BIN" ]; then
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <!-- «Открыть в программе» в Finder для любых файлов, в т.ч. без расширения (authorized_keys, config…):
+         public.data покрывает всё, ранг Alternate — QTerm Editor в списке, но чужие умолчания не перехватывает -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Текст и конфиги</string>
+            <key>CFBundleTypeRole</key><string>Editor</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.plain-text</string>
+                <string>public.text</string>
+                <string>public.source-code</string>
+                <string>public.script</string>
+                <string>public.shell-script</string>
+                <string>public.json</string>
+                <string>public.xml</string>
+                <string>public.yaml</string>
+                <string>public.log</string>
+                <string>public.data</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
 EPLIST
   codesign --force --deep -s "$SIGN_IDENTITY" "$EDITOR_APP" >/dev/null 2>&1 || true
+  # Finder узнаёт о типах документов редактора после регистрации в LaunchServices
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$EDITOR_APP" >/dev/null 2>&1 || true
   echo "==> вложен $EDITOR_NAME.app"
 fi
 

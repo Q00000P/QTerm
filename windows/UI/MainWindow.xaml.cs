@@ -241,6 +241,7 @@ public partial class MainWindow : Window
             case "sync": SyncButton_Click(this, new RoutedEventArgs()); break;
             case "qeditor": _ = OpenScrapbookAsync(); break;
             case "xui": ShowXui(); break;
+            case "cascade": ShowCascade(); break;
             case "nodeadd": AddNodeFromSelection(); break;
             case "hotkeys": ShowHotkeys(); break;
             default:
@@ -856,8 +857,7 @@ public partial class MainWindow : Window
             _xuiWin = new XuiWindow(_repo)
             {
                 RunInTerminal = RunInSessionAsync,
-                ExecInSession = ExecInSessionAsync,
-                SessionConnected = id => ConnectedClient(id) is not null,
+                OpenCascade = ShowCascade,
             };
             _xuiWin.Closed += (_, _) => _xuiWin = null;
             Closed += (_, _) => _xuiWin?.Close();
@@ -865,6 +865,28 @@ public partial class MainWindow : Window
         }
         if (_xuiWin.WindowState == WindowState.Minimized) _xuiWin.WindowState = WindowState.Normal;
         _xuiWin.Activate();
+    }
+
+    private CascadeWindow? _cascWin;
+
+    private void CascadeButton_Click(object sender, RoutedEventArgs e) => ShowCascade();
+
+    /// <summary>Каскад: отдельное окно (без Owner — живёт рядом с терминалом и «Нодами 3x-ui»), одно на QTerm.</summary>
+    private void ShowCascade()
+    {
+        if (_cascWin is null || !_cascWin.IsLoaded)
+        {
+            _cascWin = new CascadeWindow(_repo)
+            {
+                ExecInSession = ExecInSessionAsync,
+                SessionConnected = id => ConnectedClient(id) is not null,
+            };
+            _cascWin.Closed += (_, _) => _cascWin = null;
+            Closed += (_, _) => _cascWin?.Close();
+            _cascWin.Show();
+        }
+        if (_cascWin.WindowState == WindowState.Minimized) _cascWin.WindowState = WindowState.Normal;
+        _cascWin.Activate();
     }
 
     /// <summary>Выделил в терминале итог установщика (выделение = копия в буфер) → хоткей →
@@ -924,6 +946,9 @@ public partial class MainWindow : Window
         var xui = new MenuItem { Header = "Ноды 3x-ui…", InputGestureText = KeyText("xui") };
         xui.Click += (_, _) => ShowXui();
         menu.Items.Add(xui);
+        var casc = new MenuItem { Header = "Каскад…", InputGestureText = KeyText("cascade") };
+        casc.Click += (_, _) => ShowCascade();
+        menu.Items.Add(casc);
         var nodeAdd = new MenuItem { Header = "Нода из выделения (3x-ui / AWG)…", InputGestureText = KeyText("nodeadd") };
         nodeAdd.Click += (_, _) => Dispatcher.InvokeAsync(AddNodeFromSelection);
         menu.Items.Add(nodeAdd);

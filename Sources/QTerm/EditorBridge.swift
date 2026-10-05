@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CoreServices
 
 /// Мост к отдельному приложению QTermEditor.app.
 ///
@@ -32,6 +33,10 @@ final class EditorBridge: ObservableObject {
         EditorIPC.sweep()
         token = EditorIPC.listen(EditorIPC.toHost) { [weak self] message in
             Task { @MainActor in self?.handle(message) }
+        }
+        // вложенный редактор — в LaunchServices: Finder предлагает его для любых файлов (и без расширения)
+        if let url = editorAppURL {
+            DispatchQueue.global(qos: .utility).async { _ = LSRegisterURL(url as CFURL, true) }
         }
     }
 

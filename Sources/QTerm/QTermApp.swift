@@ -88,6 +88,8 @@ struct QTermApp: App {
                 Divider()
                 Button("Ноды 3x-ui…") { openWindow(id: "xui") }
                     .keyboardShortcut(hotkeys.shortcut("xui"))
+                Button("Каскад…") { openWindow(id: "cascade") }
+                    .keyboardShortcut(hotkeys.shortcut("cascade"))
                 Button("Нода из выделения (3x-ui / AWG)…") {
                     // выделение терминала уже в буфере (выделил = скопировал)
                     XuiCenter.shared.requestNodeAdd(XuiCenter.clipboardText())
@@ -143,6 +145,14 @@ struct QTermApp: App {
                 .environmentObject(state)
         }
         .defaultSize(width: 1240, height: 780)
+
+        // «Каскад»: mihomo на сервере с правилами Кинетиков — источники нод, кто идёт в каскад, группы, правила.
+        // Отдельное окно: живёт рядом с терминалом и «Нодами 3x-ui».
+        Window("Каскад", id: "cascade") {
+            CascadeWindowView()
+                .environmentObject(state)
+        }
+        .defaultSize(width: 1240, height: 800)
 
         // Настройки (⌘,) — стандартное маковское окно.
         Settings {
