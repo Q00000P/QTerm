@@ -37,7 +37,19 @@ public partial class MainWindow : Window
 
     private sealed record NodeRow(Guid Id, string Name, string Address);
 
-    public enum TabKind { Term }
+    /// <summary>Term — SSH-терминал ноды; Job — вывод задачи хаба QDash (PTY-поток задачи в тот же xterm, ввод — в задачу).</summary>
+    public enum TabKind { Term, Job }
+
+    /// <summary>Вкладка задачи хаба: опрос /api/jobs/out длинным поллингом, ввод — /api/jobs/input.</summary>
+    private sealed class JobTab
+    {
+        public QDash.QDashClient Client = null!;
+        public string JobId = "";
+        public CancellationTokenSource Cts = new();
+        public bool Running = true;
+    }
+
+    private readonly Dictionary<Guid, JobTab> _jobs = new();
 
     public sealed class TabVM : INotifyPropertyChanged
     {
@@ -107,6 +119,10 @@ public partial class MainWindow : Window
         _bridge = new TermBridge(Web);
         _bridge.Input += (id, data) =>
         {
+            // Вкладка задачи хаба — ввод уходит в задачу (Enter xterm = \r → \n для stdin скрипта)
+            JobTab? jt;
+            lock (_jobs) _jobs.TryGetValue(id, out jt);
+            if (jt is not null) { JobInput(id, jt, data); return; }
             // Ввод всегда адресный; «Во все» работает по Enter целыми строками
             SshSessionController? c;
             lock (_controllers) _controllers.TryGetValue(id, out c);
@@ -242,6 +258,7 @@ public partial class MainWindow : Window
             case "qeditor": _ = OpenScrapbookAsync(); break;
             case "xui": ShowXui(); break;
             case "cascade": ShowCascade(); break;
+            case "qdash": ShowQDash(); break;
             case "nodeadd": AddNodeFromSelection(); break;
             case "hotkeys": ShowHotkeys(); break;
             default:
@@ -756,6 +773,9 @@ public partial class MainWindow : Window
             SshSessionController? ctl;
             lock (_controllers) _controllers.Remove(id, out ctl);
             ctl?.Dispose();
+            JobTab? jt;
+            lock (_jobs) _jobs.Remove(id, out jt);
+            jt?.Cts.Cancel(); // опрос вывода задачи прекращается, сама задача на хабе живёт дальше
             _bridge?.Close(id);
             if (_monitors.Remove(id, out var mon)) mon.Dispose();
             _lastStats.Remove(id);
@@ -804,6 +824,23 @@ public partial class MainWindow : Window
             var dev = new MenuItem { Header = "DevTools (диагностика)" };
             dev.Click += (_, _) => Web.CoreWebView2?.OpenDevToolsWindow();
             menu.Items.Add(dev);
+            menu.Items.Add(new Separator());
+        }
+        else if (vm.Kind == TabKind.Job)
+        {
+            JobTab? jt;
+            lock (_jobs) _jobs.TryGetValue(id, out jt);
+            var kill = new MenuItem { Header = "Остановить задачу на хабе", IsEnabled = jt is { Running: true } };
+            kill.Click += async (_, _) =>
+            {
+                if (jt is null) return;
+                try { await jt.Client.PostAsync("/api/jobs/kill", new { id = jt.JobId }); }
+                catch (Exception ex) { MessageBox.Show(this, ex.Message, "QDash", MessageBoxButton.OK, MessageBoxImage.Warning); }
+            };
+            menu.Items.Add(kill);
+            var qd = new MenuItem { Header = "Окно QDash…" };
+            qd.Click += (_, _) => ShowQDash();
+            menu.Items.Add(qd);
             menu.Items.Add(new Separator());
         }
         var close = new MenuItem { Header = "Закрыть" };
@@ -889,6 +926,127 @@ public partial class MainWindow : Window
         _cascWin.Activate();
     }
 
+    // ── QDash: хаб сети, его задачи — вкладками терминала ──
+
+    private QDashWindow? _qdWin;
+
+    private void QDashButton_Click(object sender, RoutedEventArgs e) => ShowQDash();
+
+    /// <summary>Окно QDash: одно, без Owner (как «Ноды 3x-ui» и «Каскад»).</summary>
+    private void ShowQDash()
+    {
+        // код 2FA хаба спрашивается там, где нажали — одним диалогом на всё приложение
+        QDash.QDashCenter.Store ??= new QDash.QDashStore(_repo);
+        QDash.QDashCenter.AskCode ??= (what, tierName) =>
+            Dispatcher.InvokeAsync(() => InputDialog.Ask(
+                _qdWin is { IsLoaded: true } w ? (Window)w : this,
+                $"Хаб просит код подтверждения (2FA): {what}\nТир: {tierName}. Окно откроется для этого устройства.")).Task;
+        if (_qdWin is null || !_qdWin.IsLoaded)
+        {
+            _qdWin = new QDashWindow(_repo)
+            {
+                OpenJob = OpenJobTab,
+                ExecInSession = ExecInSessionAsync,
+            };
+            _qdWin.Closed += (_, _) => _qdWin = null;
+            Closed += (_, _) => _qdWin?.Close();
+            _qdWin.Show();
+        }
+        if (_qdWin.WindowState == WindowState.Minimized) _qdWin.WindowState = WindowState.Normal;
+        _qdWin.Activate();
+    }
+
+    /// <summary>Вывод задачи хаба — вкладкой в общей ленте: /api/jobs/out отдаёт сырой PTY-поток (xterm-256color),
+    /// он идёт в тот же xterm, что и SSH; ввод с клавиатуры — в задачу (/api/jobs/input).</summary>
+    public void OpenJobTab(QDash.QDashClient client, string jobId, string title)
+    {
+        if (_bridge is null) return;
+        // та же задача уже открыта — переключиться
+        Guid? have = null;
+        lock (_jobs)
+            foreach (var (tid, jt0) in _jobs)
+                if (jt0.JobId == jobId && ReferenceEquals(jt0.Client, client)) { have = tid; break; }
+        if (have is { } h) { ActivateTab(h); Activate(); return; }
+
+        var tabId = Guid.NewGuid();
+        var vm = new TabVM
+        {
+            Id = tabId, Kind = TabKind.Job, Name = "⚙ " + (title.Length > 40 ? title[..40] + "…" : title),
+            Endpoint = "задача хаба " + client.Hub.Display,
+        };
+        _tabs.Add(vm);
+        _bridge.CreateTerm(tabId);
+        ActivateTab(tabId);
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+
+        var jt = new JobTab { Client = client, JobId = jobId };
+        lock (_jobs) _jobs[tabId] = jt;
+        vm.DotBrush = Brushes.Orange;
+        _ = Task.Run(() => PollJobAsync(tabId, vm, jt));
+    }
+
+    private async Task PollJobAsync(Guid tabId, TabVM vm, JobTab jt)
+    {
+        long from = 0;
+        var fails = 0;
+        var ct = jt.Cts.Token;
+        void Out(string s) => _bridge?.Output(tabId, System.Text.Encoding.UTF8.GetBytes(s));
+        while (!ct.IsCancellationRequested)
+        {
+            System.Text.Json.Nodes.JsonObject j;
+            try
+            {
+                j = await jt.Client.GetAsync($"/api/jobs/out?id={Uri.EscapeDataString(jt.JobId)}&from={from}", ct);
+                fails = 0;
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                if (++fails >= 5)
+                {
+                    Out($"\r\n\x1b[31m[QDash: связь с хабом потеряна — {ex.Message}]\x1b[0m\r\n");
+                    jt.Running = false;
+                    RunOnUi(() => vm.DotBrush = Brushes.IndianRed);
+                    return;
+                }
+                try { await Task.Delay(2000, ct); } catch { return; }
+                continue;
+            }
+            var data = j["data"]?.ToString() ?? "";
+            if (data.Length > 0) Out(data);
+            if (j["seq"] is { } sq) { try { from = sq.GetValue<long>(); } catch { } }
+            var status = j["status"]?.ToString() ?? "";
+            var waiting = j["waiting"]?.GetValue<bool>() == true;
+            RunOnUi(() => vm.DotBrush = status == "running" ? (waiting ? Brushes.Orange : Brushes.LimeGreen) : status == "done" ? Brushes.Gray : Brushes.IndianRed);
+            if (status is "done" or "failed" or "killed")
+            {
+                var exit = j["exit"]?.ToString() ?? "";
+                var err = j["error"]?.ToString() ?? "";
+                Out($"\r\n\x1b[90m[QDash: задача {(status == "done" ? "завершена" : status == "killed" ? "остановлена" : "упала")}" +
+                    $"{(exit.Length > 0 && exit != "0" ? ", код " + exit : "")}{(err.Length > 0 ? " — " + err : "")}]\x1b[0m\r\n");
+                jt.Running = false;
+                return;
+            }
+            // хаб сам ждёт до 2 с, если вывода нет; при вывода — сразу дальше
+            if (data.Length == 0) { try { await Task.Delay(300, ct); } catch { return; } }
+        }
+    }
+
+    private void JobInput(Guid tabId, JobTab jt, byte[] data)
+    {
+        if (!jt.Running) return;
+        var text = System.Text.Encoding.UTF8.GetString(data).Replace("\r\n", "\n").Replace('\r', '\n');
+        _ = Task.Run(async () =>
+        {
+            try { await jt.Client.PostAsync("/api/jobs/input", new { id = jt.JobId, text }); }
+            catch (Exception ex)
+            {
+                _bridge?.Output(tabId, System.Text.Encoding.UTF8.GetBytes($"\r\n\x1b[31m[QDash: ввод не принят — {ex.Message}]\x1b[0m\r\n"));
+            }
+        });
+    }
+
     /// <summary>Выделил в терминале итог установщика (выделение = копия в буфер) → хоткей →
     /// «новая или переустановка», вход, токен, сохранение в вейлт → окно «Ноды 3x-ui» на нужной вкладке.</summary>
     private void AddNodeFromSelection()
@@ -949,6 +1107,9 @@ public partial class MainWindow : Window
         var casc = new MenuItem { Header = "Каскад…", InputGestureText = KeyText("cascade") };
         casc.Click += (_, _) => ShowCascade();
         menu.Items.Add(casc);
+        var qd = new MenuItem { Header = "QDash (хаб сети)…", InputGestureText = KeyText("qdash") };
+        qd.Click += (_, _) => ShowQDash();
+        menu.Items.Add(qd);
         var nodeAdd = new MenuItem { Header = "Нода из выделения (3x-ui / AWG)…", InputGestureText = KeyText("nodeadd") };
         nodeAdd.Click += (_, _) => Dispatcher.InvokeAsync(AddNodeFromSelection);
         menu.Items.Add(nodeAdd);
@@ -1222,6 +1383,15 @@ public partial class MainWindow : Window
             lock (_controllers) all = _controllers.Values.ToList();
             foreach (var ctl in all) ctl.Write(bytes);
             return all.Count > 0;
+        }
+        // активна вкладка задачи хаба — сниппет/команда идёт в её stdin
+        if (_activeTab is { } ja && _tabs.FirstOrDefault(t => t.Id == ja) is { Kind: TabKind.Job })
+        {
+            JobTab? jt;
+            lock (_jobs) _jobs.TryGetValue(ja, out jt);
+            if (jt is null) return false;
+            JobInput(ja, jt, bytes);
+            return true;
         }
         var target = _activeTab is { } a &&
             _tabs.FirstOrDefault(t => t.Id == a) is { Kind: TabKind.Term }

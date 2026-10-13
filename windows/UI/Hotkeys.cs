@@ -73,6 +73,7 @@ public static class Hotkeys
             new("qeditor", "QEditor (скрапбук)", ""),
             new("xui", "Ноды 3x-ui", ""),
             new("cascade", "Каскад", ""),
+            new("qdash", "QDash (хаб сети)", ""),
             new("nodeadd", "Нода из выделения (итог установщика 3x-ui / AWG)", "Ctrl+Shift+KeyA"),
             new("hotkeys", "Горячие клавиши…", ""),
         });

@@ -196,7 +196,8 @@ public sealed class XuiStore
 
     // ── синк: записи xui.* — LWW по встроенному updatedAt (остальные секреты — локальный приоритет) ──
 
-    public static bool IsLww(string key) => key.StartsWith("xui.", StringComparison.Ordinal);
+    public static bool IsLww(string key) =>
+        key.StartsWith("xui.", StringComparison.Ordinal) || QDash.QDashStore.IsLww(key); // qdash.hub:* — тоже LWW
 
     private static string? UpdatedAtOf(string json)
     {
