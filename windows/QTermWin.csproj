@@ -44,10 +44,18 @@
     <Content Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <!-- Каскад: скрипт сервера (qcascade) — один на мак и винду, в корне репо; QTerm заливает его на сервер сам -->
+  <!-- Каскад: скрипт сервера (qcascade) — один на мак и винду, в корне репо (..\scripts); QTerm заливает его
+       на сервер сам. Рабочая копия только windows/ (C:\dev\QTermWin) — берётся scripts\vpn-cascade.sh рядом -->
+  <PropertyGroup>
+    <CascadeScript Condition="Exists('..\scripts\vpn-cascade.sh')">..\scripts\vpn-cascade.sh</CascadeScript>
+    <CascadeScript Condition="'$(CascadeScript)' == '' And Exists('scripts\vpn-cascade.sh')">scripts\vpn-cascade.sh</CascadeScript>
+  </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="..\scripts\vpn-cascade.sh" LogicalName="vpn-cascade.sh" />
+    <EmbeddedResource Include="$(CascadeScript)" LogicalName="vpn-cascade.sh" Condition="'$(CascadeScript)' != ''" />
   </ItemGroup>
+  <Target Name="WarnNoCascadeScript" BeforeTargets="Build" Condition="'$(CascadeScript)' == ''">
+    <Error Text="Нет scripts\vpn-cascade.sh ни в ..\scripts, ни в scripts\ — окно «Каскад» без него не соберётся" />
+  </Target>
 
   <!-- Editor\ — отдельное приложение QEditor.exe со своим csproj: из QTerm его
        исходники исключаем, общий только протокол канала -->
