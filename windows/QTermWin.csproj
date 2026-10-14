@@ -9,7 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>QTerm</AssemblyName>
     <RootNamespace>QTermWin</RootNamespace>
-    <Version>3.14.0</Version>
+    <Version>3.16.0</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- Per-Monitor V2: чёткий UI и верные координаты на мониторах с разным масштабом -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -57,26 +57,9 @@
     <Error Text="Нет scripts\vpn-cascade.sh ни в ..\scripts, ни в scripts\ — окно «Каскад» без него не соберётся" />
   </Target>
 
-  <!-- Editor\ — отдельное приложение QEditor.exe со своим csproj: из QTerm его
-       исходники исключаем, общий только протокол канала -->
-  <ItemGroup>
-    <Compile Remove="Editor\**" />
-    <Page Remove="Editor\**" />
-    <None Remove="Editor\**" />
-    <EmbeddedResource Remove="Editor\**" />
-    <Compile Include="Editor\Shared\EditorProtocol.cs" Link="Shared\EditorProtocol.cs" />
-    <Compile Include="Editor\Shared\ThemeManager.cs" Link="Shared\ThemeManager.cs" />
-    <Compile Include="Editor\Shared\WindowFit.cs" Link="Shared\WindowFit.cs" />
-    <Compile Include="Editor\Shared\EditorProcess.cs" Link="Shared\EditorProcess.cs" />
-  </ItemGroup>
-
-  <!-- dotnet run (Debug): заодно собрать QEditor, чтобы QTerm его нашёл.
-       Запущенный QEditor держит свой exe — тогда сборка редактора пропускается
-       с предупреждением, QTerm собирается всё равно. -->
-  <Target Name="BuildQEditor" BeforeTargets="Build"
-          Condition="'$(Configuration)' == 'Debug' And !$(MSBuildProjectName.EndsWith('_wpftmp'))">
-    <Exec Command="dotnet build &quot;$(MSBuildProjectDirectory)\Editor\QEditor.csproj&quot; -c Debug -nologo -v:q"
-          ContinueOnError="true" />
-  </Target>
+  <!-- Редактор — отдельное приложение QEditor.exe из своего репо (github.com/Q00000P/QEditor);
+       QTerm ждёт его рядом с QTerm.exe (publish.cmd копирует из ..\QEditor\windows\publish).
+       Общее — Shared\ (протокол канала, тема, окна): копия файлов из QEditor\windows\Shared,
+       версия протокола сверяется в hello. -->
 
 </Project>

@@ -9,15 +9,9 @@ let package = Package(
         .package(path: "../Citadel"),
         // SessionVaultKit рядом в той же папке (репо/воркспейс):
         .package(path: "../SessionVaultKit"),
-        .package(path: "../Argon2Swift"),
-        // Встроенный редактор: вендоренный CodeEditSourceEditor 0.13.2
-        // (~/dev, пропатчен под CLI-сборку: локальный CodeEditSymbols без
-        // xcassets/Bundle.module, без SwiftLint-плагина).
-        .package(path: "../CodeEditSourceEditor"),
-        // Транзитивная зависимость редактора, но импортируется напрямую
-        // (CodeLanguage.detectLanguageFrom) — поэтому объявлена явно.
-        // exact 0.1.20 — ровно то, что пинует CodeEditSourceEditor 0.13.2.
-        .package(url: "https://github.com/CodeEditApp/CodeEditLanguages.git", exact: "0.1.20")
+        .package(path: "../Argon2Swift")
+        // Редактор — отдельное приложение QEditor (своё репо, github.com/Q00000P/QEditor):
+        // собирается там, make-app.sh вкладывает готовый QEditor.app в бандл.
     ],
     targets: [
         .executableTarget(
@@ -26,19 +20,7 @@ let package = Package(
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 .product(name: "Citadel", package: "Citadel"),
                 "SessionVaultKit",
-                .product(name: "Argon2Swift", package: "Argon2Swift"),
-                .product(name: "CodeEditSourceEditor", package: "CodeEditSourceEditor"),
-                .product(name: "CodeEditLanguages", package: "CodeEditLanguages")
-            ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        // Отдельное приложение-редактор: своя иконка в доке, свои окна.
-        // SSH не знает — общается с QTerm через EditorIPC.
-        .executableTarget(
-            name: "QTermEditor",
-            dependencies: [
-                .product(name: "CodeEditSourceEditor", package: "CodeEditSourceEditor"),
-                .product(name: "CodeEditLanguages", package: "CodeEditLanguages")
+                .product(name: "Argon2Swift", package: "Argon2Swift")
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         )

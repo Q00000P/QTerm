@@ -39,6 +39,9 @@ public partial class MainWindow
         _filesTab is { } id && _files.TryGetValue(id, out var s) ? s : null;
 
     private const long EditorMaxBytes = 2 * 1024 * 1024;
+    /// <summary>PDF (волна 40): QEditor открывает его вкладкой-просмотрщиком, байты не декодируются — лимит выше.</summary>
+    private const long EditorMaxPdfBytes = 64 * 1024 * 1024;
+    private static bool IsPdfName(string name) => name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase);
 
     // ── Иконки типов (Segoe Fluent Icons / MDL2) ──
 
@@ -403,6 +406,14 @@ public partial class MainWindow
         });
     }
 
+    /// <summary>PDF — бинарник, но QEditor показывает его своей вкладкой (PDFium).</summary>
+    private static bool LooksPdf(byte[] data)
+    {
+        for (int i = 0; i + 4 <= Math.Min(data.Length, 1024); i++)
+            if (data[i] == '%' && data[i + 1] == 'P' && data[i + 2] == 'D' && data[i + 3] == 'F') return true;
+        return false;
+    }
+
     private static bool LooksBinary(byte[] data)
     {
         // UTF-16 (BOM FF FE / FE FF) полон нулей, но это текст — QEditor его читает
@@ -421,9 +432,10 @@ public partial class MainWindow
     /// <summary>Скачать и открыть в QEditor. Возвращает id документа (или null).</summary>
     private async Task<string?> OpenInEditorAsync(Files.FileService svc, Files.RemoteEntry en)
     {
-        if (en.Size > EditorMaxBytes)
+        var limit = IsPdfName(en.Name) ? EditorMaxPdfBytes : EditorMaxBytes;
+        if (en.Size > limit)
         {
-            FsStatus.Text = $"«{en.Name}» больше 2 МБ — редактор не для таких, есть «Скачать»";
+            FsStatus.Text = $"«{en.Name}» больше {limit / 1048576} МБ — редактор не для таких, есть «Скачать»";
             return null;
         }
         var remote = Remote(svc, en);
@@ -432,7 +444,7 @@ public partial class MainWindow
         try
         {
             var data = await Task.Run(() => svc.DownloadL(remote));
-            if (LooksBinary(data)) { FsStatus.Text = $"«{en.Name}» — бинарный, только «Скачать»"; return null; }
+            if (!LooksPdf(data) && LooksBinary(data)) { FsStatus.Text = $"«{en.Name}» — бинарный, только «Скачать»"; return null; }
             FsStatus.Text = $"Режим: {svc.Fs.Kind}";
             return await _editor.OpenAsync(svc, remote, data, NodeName()); // сырые байты: кодировку решает QEditor
         }

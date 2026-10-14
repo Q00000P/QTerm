@@ -1,10 +1,10 @@
 import Foundation
 
-/// Обмен между QTerm.app и отдельным приложением QTermEditor.app.
+/// Обмен между QTerm.app и отдельным приложением QEditor.app (своё репо; этот файл — копия в обоих).
 ///
 /// Транспорт нарочно простой и без сокетов: сообщение пишется JSON-файлом в
 /// общую папку, а адресату шлётся distributed notification с именем файла.
-/// Так нет ни сервера, ни лимитов на размер payload (файлы до 2 МБ), а
+/// Так нет ни сервера, ни лимитов на размер payload (текст до 2 МБ, PDF до 64 МБ), а
 /// доставка переживает старт приложения-получателя (папка = очередь).
 public enum EditorIPC {
 
@@ -16,6 +16,10 @@ public enum EditorIPC {
     public static let toHost = Notification.Name("com.q00000p.qterm.ipc.toHost")
 
     public static let editorBundleID = "com.q00000p.qterm.editor"
+
+    /// Версия протокола: редактор шлёт в ready, хост сверяет со своей (репо разные —
+    /// несовпадение видно, а не молчит). Поднимать при несовместимом изменении сообщений.
+    public static let protocolVersion = 1
 
     // MARK: Сообщения
 
@@ -43,13 +47,16 @@ public enum EditorIPC {
         public var bytes: String?
         /// open: заменить содержимое даже при несохранённых правках (перечитать).
         public var force: Bool?
+        /// ready/ping: версия протокола отправителя.
+        public var proto: Int?
 
         public init(
             kind: Kind, docID: String = "",
             sessionID: String? = nil, nodeName: String? = nil,
             remotePath: String? = nil, text: String? = nil,
             ok: Bool? = nil, error: String? = nil,
-            bytes: String? = nil, force: Bool? = nil
+            bytes: String? = nil, force: Bool? = nil,
+            proto: Int? = nil
         ) {
             self.kind = kind
             self.docID = docID
@@ -61,6 +68,7 @@ public enum EditorIPC {
             self.error = error
             self.bytes = bytes
             self.force = force
+            self.proto = proto
         }
     }
 

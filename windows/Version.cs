@@ -4,7 +4,7 @@
 /// Заголовок окна не совпал с волной из чата = код не встал.</summary>
 public static class WaveMarker
 {
-    public const string Wave = "39.1";
+    public const string Wave = "41";
 
     public static string Version =>
         System.Reflection.Assembly.GetExecutingAssembly().GetName().Version is { } v

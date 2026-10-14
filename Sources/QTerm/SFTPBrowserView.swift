@@ -1245,8 +1245,8 @@ struct SFTPBrowserView: View {
 
     /// Файл: скачиваем в память → вкладка в окне редактора.
     private func openInEditor(_ entry: RemoteEntry) {
-        guard entry.size <= EditorBridge.maxEditableSize else {
-            browser.errorText = "«\(entry.name)» больше 2 МБ — открой через скачивание или внешний редактор"
+        guard entry.size <= EditorBridge.maxEditableSize(for: entry.name) else {
+            browser.errorText = "«\(entry.name)» больше \(EditorBridge.maxEditableText(for: entry.name)) — открой через скачивание или внешний редактор"
             return
         }
         let session = connection.session

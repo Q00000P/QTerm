@@ -260,7 +260,7 @@ final class AppState: ObservableObject {
     lazy var secrets = SecretStore(store: store)
     private var connectionSubs: [UUID: AnyCancellable] = [:]
 
-    /// Мост к отдельному приложению-редактору QTermEditor.app.
+    /// Мост к отдельному приложению-редактору QEditor.app (своё репо).
     lazy var editor: EditorBridge = {
         let e = EditorBridge()
         e.app = self

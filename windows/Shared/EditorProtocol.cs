@@ -26,10 +26,15 @@ public sealed class EditorMsg
     [JsonPropertyName("ok")] public bool? Ok { get; set; }
     [JsonPropertyName("error")] public string? Error { get; set; }
     [JsonPropertyName("bytes")] public int? Bytes { get; set; }
+    /// <summary>Версия протокола: QTerm шлёт в hello, QEditor сверяет со своей (репо разные — несовпадение видно, а не молчит).</summary>
+    [JsonPropertyName("proto")] public int? Proto { get; set; }
 }
 
 public static class EditorProtocol
 {
+    /// <summary>Поднимать при несовместимом изменении сообщений. QEditor и QTerm — разные репо, у каждого своя копия файла.</summary>
+    public const int Version = 1;
+
     /// <summary>Имя канала на пользователя (каналы видны в пределах сеанса).</summary>
     public static string PipeName =>
         "QTermEditor-" + new string(Environment.UserName.Where(char.IsLetterOrDigit).ToArray());

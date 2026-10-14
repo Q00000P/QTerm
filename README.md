@@ -10,7 +10,7 @@
 
 - **Терминал** (SwiftTerm): вкладки в общей ленте (⌘T/⌘W/⌘1-9, drag&drop), несколько вкладок на ноду поверх одного SSH-соединения (логин и Touch ID — один раз), авто-реконнект с бэкоффом, сквозной ввод во все ноды, сниппеты команд
 - **SFTP-проводник**: рекурсивные скачивание/заливка папок, права (chmod-диалог), переименование, копирование путей, стартовые пути на сессию; **командный режим** — на серверах без sftp-server (dropbear на роутерах) проводник работает через exec (`ls`/`base64`), с подсказкой как поставить sftp-server
-- **Встроенный редактор** (tree-sitter-подсветка): двойной клик по файлу → правка → ⌘S заливает на сервер; отдельное окно со вкладками (⌘⇧E)
+- **Редактор QEditor** (отдельное приложение и [отдельное репо](https://github.com/Q00000P/QEditor)): двойной клик по файлу → правка → ⌘S заливает на сервер; текст с tree-sitter-подсветкой и PDF (просмотр, разметка, формы, страницы)
 - **Вейлт**: сессии, ключи и сниппеты в шифрованном хранилище (Keychain/Secure Enclave, вход по Touch ID); приватные ключи лежат внутри вейлта, не файлами
 - **Нативный импорт PuTTY .ppk** (PPK2/PPK3, включая Argon2id) — без puttygen
 - **Импорт/экспорт MobaXterm** (.mobaconf) и шифрованный экспорт всего вейлта (.qtvault, PBKDF2 + AES-256-GCM)
@@ -26,12 +26,13 @@
 ```bash
 mkdir qterm-src && cd qterm-src
 git clone https://github.com/Q00000P/QTerm.git
-./QTerm/setup-deps.sh     # клонирует пакеты рядом и патчит редакторные под CLI-сборку
+./QTerm/setup-deps.sh     # клонирует пакеты рядом (в т.ч. репо QEditor и его зависимости)
+(cd QEditor/macos && ./make-app.sh)   # QEditor.app — QTerm вложит его в свой бандл
 cd QTerm && ./make-app.sh
 open build/QTerm.app
 ```
 
-Пакеты лежат рядом с QTerm (path-зависимости): Citadel (форк), SessionVaultKit, Argon2Swift (форк), CodeEditSourceEditor + CodeEditSymbols (апстрим на тегах, патчи накладывает setup-deps.sh — подробности в скрипте и THIRD-PARTY-NOTICES.md).
+Пакеты лежат рядом с QTerm (path-зависимости): Citadel (форк), SessionVaultKit, Argon2Swift (форк). Редактор — соседнее репо QEditor со своими зависимостями (CodeEditSourceEditor + CodeEditSymbols, патчи накладывает его setup-deps.sh).
 
 ## Запуск релизного бинаря
 

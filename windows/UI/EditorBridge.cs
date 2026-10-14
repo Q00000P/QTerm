@@ -104,7 +104,7 @@ public sealed class EditorBridge
         try { await p.ConnectAsync(timeoutMs); }
         catch { p.Dispose(); return false; }
         var w = EditorProtocol.Writer(p);
-        try { w.WriteLine(EditorProtocol.Encode(new EditorMsg { Op = "hello" })); }
+        try { w.WriteLine(EditorProtocol.Encode(new EditorMsg { Op = "hello", Proto = EditorProtocol.Version })); }
         catch { p.Dispose(); return false; }
         lock (_wl) { _pipe = p; _w = w; }
         _ = Task.Run(() => ReadLoop(p));
@@ -194,8 +194,8 @@ public sealed class EditorBridge
         }
     }
 
-    /// <summary>Релиз: QEditor.exe рядом с QTerm.exe. Дев (dotnet run): ищем
-    /// Editor\bin\**\QEditor.exe вверх по дереву от бинаря.</summary>
+    /// <summary>Релиз: QEditor.exe рядом с QTerm.exe. Дев (dotnet run): соседнее репо
+    /// QEditor (..\QEditor\windows\publish или bin\**) вверх по дереву от бинаря.</summary>
     private static string? FindEditorExe()
     {
         var dir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
@@ -203,12 +203,16 @@ public sealed class EditorBridge
         if (File.Exists(near)) return near;
         for (var d = new DirectoryInfo(dir); d is not null; d = d.Parent)
         {
-            var proj = Path.Combine(d.FullName, "Editor", "QEditor.csproj");
-            if (!File.Exists(proj)) continue;
-            var bin = Path.Combine(d.FullName, "Editor", "bin");
-            if (!Directory.Exists(bin)) return null;
-            return Directory.GetFiles(bin, "QEditor.exe", SearchOption.AllDirectories)
-                .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+            foreach (var root in new[] { Path.Combine(d.FullName, "QEditor", "windows"), Path.Combine(d.FullName, "QEditor") })
+            {
+                if (!File.Exists(Path.Combine(root, "QEditor.csproj"))) continue;
+                var pub = Path.Combine(root, "publish", "QEditor.exe");
+                if (File.Exists(pub)) return pub;
+                var bin = Path.Combine(root, "bin");
+                if (!Directory.Exists(bin)) return null;
+                return Directory.GetFiles(bin, "QEditor.exe", SearchOption.AllDirectories)
+                    .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+            }
         }
         return null;
     }

@@ -16,7 +16,7 @@ if [ -z "$SIGN_IDENTITY" ]; then
     SIGN_IDENTITY="${SIGN_IDENTITY:-QTerm Self-Signed}"
 fi
 BUILD_CONFIG="release"
-APP_VERSION="3.13.3"
+APP_VERSION="3.16.0"
 
 cd "$(dirname "$0")"
 mkdir -p build
@@ -94,68 +94,20 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Старый процесс редактора переживает пересборку и маскирует новые правки —
-# прибиваем, чтобы следующий запуск гарантированно был свежим бинарём.
+# --- вложенное приложение-редактор QEditor.app (своё репо github.com/Q00000P/QEditor,
+# собирается там: ../QEditor/macos/make-app.sh). Берём готовый бандл; путь можно
+# переопределить переменной QEDITOR_APP.
+killall QEditor 2>/dev/null || true
 killall QTermEditor 2>/dev/null || true
-
-# --- вложенное приложение-редактор (своя иконка в доке)
-EDITOR_NAME="QTermEditor"
-EDITOR_BIN="$BIN_DIR/$EDITOR_NAME"
-if [ -f "$EDITOR_BIN" ]; then
-  EDITOR_APP="$APP/Contents/Library/$EDITOR_NAME.app"
-  mkdir -p "$EDITOR_APP/Contents/MacOS" "$EDITOR_APP/Contents/Resources"
-  cp "$EDITOR_BIN" "$EDITOR_APP/Contents/MacOS/$EDITOR_NAME"
-  copy_bundles "$EDITOR_APP/Contents/Resources"
-  # У редактора СВОЯ иконка (визуально отличается в доке от QTerm).
-  if [ -f "Resources/EditorIcon.icns" ]; then
-    cp Resources/EditorIcon.icns "$EDITOR_APP/Contents/Resources/AppIcon.icns"
-  elif [ -f "Resources/AppIcon.icns" ]; then
-    cp Resources/AppIcon.icns "$EDITOR_APP/Contents/Resources/AppIcon.icns"
-  fi
-  cat > "$EDITOR_APP/Contents/Info.plist" <<EPLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key><string>$EDITOR_NAME</string>
-    <key>CFBundleIdentifier</key><string>com.q00000p.qterm.editor</string>
-    <key>CFBundleName</key><string>QTerm Editor</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
-    <key>CFBundleVersion</key><string>$BUILD_NUM</string>
-    <key>CFBundleIconFile</key><string>AppIcon</string>
-    <key>LSMinimumSystemVersion</key><string>15.0</string>
-    <key>NSHighResolutionCapable</key><true/>
-    <!-- «Открыть в программе» в Finder для любых файлов, в т.ч. без расширения (authorized_keys, config…):
-         public.data покрывает всё, ранг Alternate — QTerm Editor в списке, но чужие умолчания не перехватывает -->
-    <key>CFBundleDocumentTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleTypeName</key><string>Текст и конфиги</string>
-            <key>CFBundleTypeRole</key><string>Editor</string>
-            <key>LSHandlerRank</key><string>Alternate</string>
-            <key>LSItemContentTypes</key>
-            <array>
-                <string>public.plain-text</string>
-                <string>public.text</string>
-                <string>public.source-code</string>
-                <string>public.script</string>
-                <string>public.shell-script</string>
-                <string>public.json</string>
-                <string>public.xml</string>
-                <string>public.yaml</string>
-                <string>public.log</string>
-                <string>public.data</string>
-            </array>
-        </dict>
-    </array>
-</dict>
-</plist>
-EPLIST
-  codesign --force --deep -s "$SIGN_IDENTITY" "$EDITOR_APP" >/dev/null 2>&1 || true
-  # Finder узнаёт о типах документов редактора после регистрации в LaunchServices
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$EDITOR_APP" >/dev/null 2>&1 || true
-  echo "==> вложен $EDITOR_NAME.app"
+EDITOR_SRC="${QEDITOR_APP:-../QEditor/macos/build/QEditor.app}"
+if [ -d "$EDITOR_SRC" ]; then
+  mkdir -p "$APP/Contents/Library"
+  rm -rf "$APP/Contents/Library/QEditor.app"
+  cp -R "$EDITOR_SRC" "$APP/Contents/Library/QEditor.app"
+  echo "==> вложен QEditor.app из $EDITOR_SRC"
+else
+  echo "!!! QEditor.app не найден ($EDITOR_SRC) — редактор в сборке отсутствует."
+  echo "!!! git clone https://github.com/Q00000P/QEditor ../QEditor && (cd ../QEditor/macos && ./setup-deps.sh && ./make-app.sh)"
 fi
 
 echo "==> codesign"
