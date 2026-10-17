@@ -22,13 +22,15 @@ final class EditorBridge: ObservableObject {
     static let maxPDFSize: UInt64 = 64 * 1024 * 1024
 
     static func isPDFName(_ name: String) -> Bool { name.lowercased().hasSuffix(".pdf") }
+    /// Документы (DOCX/ODT — zip, бинарные): QEditor открывает их вкладкой «Документ».
+    static func isDocName(_ name: String) -> Bool { [".docx", ".odt"].contains { name.lowercased().hasSuffix($0) } }
 
     static func maxEditableSize(for name: String) -> UInt64 {
-        isPDFName(name) ? maxPDFSize : maxEditableSize
+        isPDFName(name) || isDocName(name) ? maxPDFSize : maxEditableSize
     }
 
     static func maxEditableText(for name: String) -> String {
-        isPDFName(name) ? "64 МБ" : "2 МБ"
+        isPDFName(name) || isDocName(name) ? "64 МБ" : "2 МБ"
     }
 
     enum OpenError: LocalizedError {
@@ -55,20 +57,41 @@ final class EditorBridge: ObservableObject {
 
     // MARK: Путь к приложению и запуск
 
-    /// QEditor.app лежит внутри бандла хоста (make-app.sh вкладывает его из ../QEditor/macos/build).
+    /// QEditor.app: вложенный в бандл хоста (make-app.sh кладёт его из ../QEditor/macos/build) или
+    /// поставленный отдельно — самообновление редактора ставит новые версии в ~/Applications/QEditor.app
+    /// (бандл QTerm не трогает, чтобы не ломать его подпись). Берём самый новый из найденных.
     private var editorAppURL: URL? {
+        let fm = FileManager.default
+        var found: [URL] = []
         let lib = Bundle.main.bundleURL.appendingPathComponent("Contents/Library")
         for name in ["QEditor.app", "QTermEditor.app"] {
             let u = lib.appendingPathComponent(name)
-            if FileManager.default.fileExists(atPath: u.path) { return u }
+            if fm.fileExists(atPath: u.path) { found.append(u); break }
+        }
+        for u in [fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/QEditor.app"), URL(fileURLWithPath: "/Applications/QEditor.app")]
+        where fm.fileExists(atPath: u.appendingPathComponent("Contents/MacOS/QEditor").path) {
+            found.append(u)
         }
         // Запуск из .build (разработка): готовая сборка соседнего репо QEditor.
-        let dev = Bundle.main.bundleURL.deletingLastPathComponent()
-        for rel in ["QEditor.app", "../../../../QEditor/macos/build/QEditor.app", "../../../QEditor/macos/build/QEditor.app"] {
-            let u = dev.appendingPathComponent(rel).standardizedFileURL
-            if FileManager.default.fileExists(atPath: u.path) { return u }
+        if found.isEmpty {
+            let dev = Bundle.main.bundleURL.deletingLastPathComponent()
+            for rel in ["QEditor.app", "../../../../QEditor/macos/build/QEditor.app", "../../../QEditor/macos/build/QEditor.app"] {
+                let u = dev.appendingPathComponent(rel).standardizedFileURL
+                if fm.fileExists(atPath: u.path) { return u }
+            }
         }
-        return nil
+        return found.max { Self.editorVersion($0).lexicographicallyPrecedes(Self.editorVersion($1)) }
+    }
+
+    /// Версия бандла редактора: X.Y.Z и номер билда (у CI-сборок — номер прогона) для сравнения.
+    private static func editorVersion(_ app: URL) -> [Int] {
+        // Info.plist читаем напрямую: Bundle(url:) кеширует и после обновления отдал бы старую версию
+        let info = (NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")) as? [String: Any]) ?? [:]
+        var v = (info["CFBundleShortVersionString"] as? String ?? "0").split(separator: ".").compactMap { Int($0) }
+        while v.count < 3 { v.append(0) }
+        let ci = (info["QEditorChannel"] as? String) == "ci"
+        v = Array(v.prefix(3)) + [ci ? Int(info["CFBundleVersion"] as? String ?? "0") ?? 0 : 0]
+        return v
     }
 
     var isEditorRunning: Bool {
@@ -105,7 +128,7 @@ final class EditorBridge: ObservableObject {
         let head = data.prefix(8192)
         let isPDF = data.prefix(1024).range(of: Data("%PDF".utf8)) != nil
         let utf16BOM = head.starts(with: [0xFF, 0xFE]) || head.starts(with: [0xFE, 0xFF])
-        if !isPDF, !utf16BOM, head.contains(0) { throw OpenError.binary }
+        if !isPDF, !Self.isDocName(remotePath), !utf16BOM, head.contains(0) { throw OpenError.binary }
         guard editorAppURL != nil else { throw OpenError.editorMissing }
 
         // Один и тот же файл на той же ноде — тот же docID (редактор обновит).

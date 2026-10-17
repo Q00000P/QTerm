@@ -42,6 +42,8 @@ public partial class MainWindow
     /// <summary>PDF (волна 40): QEditor открывает его вкладкой-просмотрщиком, байты не декодируются — лимит выше.</summary>
     private const long EditorMaxPdfBytes = 64 * 1024 * 1024;
     private static bool IsPdfName(string name) => name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase);
+    /// <summary>DOCX/ODT — zip (бинарные), QEditor открывает их вкладкой «Документ».</summary>
+    private static bool IsDocName(string name) => name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".odt", StringComparison.OrdinalIgnoreCase);
 
     // ── Иконки типов (Segoe Fluent Icons / MDL2) ──
 
@@ -432,7 +434,7 @@ public partial class MainWindow
     /// <summary>Скачать и открыть в QEditor. Возвращает id документа (или null).</summary>
     private async Task<string?> OpenInEditorAsync(Files.FileService svc, Files.RemoteEntry en)
     {
-        var limit = IsPdfName(en.Name) ? EditorMaxPdfBytes : EditorMaxBytes;
+        var limit = IsPdfName(en.Name) || IsDocName(en.Name) ? EditorMaxPdfBytes : EditorMaxBytes;
         if (en.Size > limit)
         {
             FsStatus.Text = $"«{en.Name}» больше {limit / 1048576} МБ — редактор не для таких, есть «Скачать»";
@@ -444,7 +446,7 @@ public partial class MainWindow
         try
         {
             var data = await Task.Run(() => svc.DownloadL(remote));
-            if (!LooksPdf(data) && LooksBinary(data)) { FsStatus.Text = $"«{en.Name}» — бинарный, только «Скачать»"; return null; }
+            if (!LooksPdf(data) && !IsDocName(en.Name) && LooksBinary(data)) { FsStatus.Text = $"«{en.Name}» — бинарный, только «Скачать»"; return null; }
             FsStatus.Text = $"Режим: {svc.Fs.Kind}";
             return await _editor.OpenAsync(svc, remote, data, NodeName()); // сырые байты: кодировку решает QEditor
         }
